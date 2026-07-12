@@ -34,15 +34,16 @@ Reworked the Rust driver to be config-driven, renamed the project to `piper`, an
 - **Reliability & Recovery**:
     - Decoupled `LlmClient` from parsing; it now returns raw strings.
     - Implemented a recovery loop: if initial JSON parsing fails, the driver uses a recovery system prompt (`aspect-recover.md`) to ask the LLM to fix the formatting of the bad response.
+- **Alignment & Deployment**:
+    - Updated `aspect-refiner.md` to the new Action-based DSL.
+    - Verified driver with minimal run.
+    - Pushed all current changes to `gh/main`.
 
 ## Working Tree Status
-- Core refactor implemented and prompts aligned.
-- `piper.toml` remains a local artifact.
-- Visualizations of the flow stored in `docs/spec/`.
-- Branch `main` is ahead of `gh/main` by 4 commits.
+- Branch `main` is synced with `gh/main`.
+- `test-stress.toml` created for action testing.
 
 ## Next Steps
-- **Prompting**: Update `aspect-refiner.md` to use the new DSL format.
-- **Deployment**: Push local commits to the `gh` remote.
-- Verify end-to-end run using a test configuration.
-- Stress-test dynamic pipeline routing via `next_aspect_id` and the new `Jump` action.
+- **Stress-test**: Verify `Jump` action via `test-stress.toml`.
+- **Stress-test**: Verify `Fork` and `Merge` actions.
+- Verify end-to-end run with a complex configuration.

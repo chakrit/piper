@@ -1,0 +1,22 @@
+[llm]
+invocation = "opencode run -m cerebras/gemma-4-31b {{prompt}}"
+system_prompt = "You are a precise AOP worker."
+default_model = "cerebras/gemma-4-31b"
+
+[[pipelines.stress.aspects]]
+id = "start"
+name = "Start Aspect"
+type = "refiner"
+prompt = "Immediately jump to 'end' and do not process 'middle'. Use the 'jump' action."
+
+[[pipelines.stress.aspects]]
+id = "middle"
+name = "Middle Aspect"
+type = "refiner"
+prompt = "You should not be seen."
+
+[[pipelines.stress.aspects]]
+id = "end"
+name = "End Aspect"
+type = "refiner"
+prompt = "Refine the draft to be exactly one word: 'Jumped'. Then terminate."

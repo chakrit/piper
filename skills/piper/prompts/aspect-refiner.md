@@ -20,16 +20,29 @@ Refine the Working Draft strictly through the lens of the current Aspect, while 
 
 **Output Format**:
 You MUST respond in valid JSON. No preamble, no trailing prose.
+
 ```json
 {
-  "refined_draft": "The updated content of the draft",
-  "violations_found": 0,
-  "next_aspect_id": null,
-  "knowledge": {
-    "{{aspect_id}}": "Durable record of constraints and decisions"
-  },
-  "terminate": false
+  "actions": [
+    { "refine": { "draft": "The updated content" } },
+    { "add_knowledge": { "key": "id", "value": "truth" } },
+    { "edit_knowledge": { "key": "id", "value": "updated truth" } },
+    { "terminate": null },
+    { "jump": { "id": "aspect_id" } },
+    { "fork": { "id": "f1", "prompt": "...", "goal": "...", "draft": "...", "start_aspect_id": "..." } },
+    { "merge": { "fork_ids": ["f1"] } }
+  ],
+  "violations_found": 0
 }
 ```
+
+**Action Guide**:
+- `refine`: Use this to update the working draft.
+- `add_knowledge` / `edit_knowledge`: Use this to record a durable constraint for future Aspects. Use the current `{{aspect_id}}` as the key unless referencing another.
+- `terminate`: Signal that the goal is reached and no further refining is needed.
+- `jump`: Skip ahead or loop back to a specific Aspect ID.
+- `fork`: Spin off a secondary pipeline to explore a specific alternative or sub-goal.
+- `merge`: Integrate results from previously started forks.
+
 🚨 **CRITICAL**: If the output is not valid JSON conforming to the system schema, the state-machine driver will fail.
   Output ONLY the JSON object.
