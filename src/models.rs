@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -24,7 +25,8 @@ pub struct Aspect {
     pub name: String,
     #[serde(rename = "type")]
     pub aspect_type: AspectType,
-    pub description: String,
+    pub prompt: String,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -33,4 +35,6 @@ pub struct LlmResponse {
     pub refined_draft: String,
     pub violations_found: u32,
     pub next_aspect_id: Option<String>,
+    pub knowledge: HashMap<String, String>,
+    pub terminate: bool,
 }

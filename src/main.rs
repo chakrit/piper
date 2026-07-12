@@ -18,6 +18,9 @@ use actions::{AppContext, WriteConfig};
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    #[arg(short = 'f', long = "file", default_value = "piper.toml")]
+    config_file: PathBuf,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -28,7 +31,7 @@ enum Commands {
     Init,
     /// Run a pipeline
     Run {
-        /// Name of the pipeline to run (from config.toml)
+        /// Name of the pipeline to run (from config file)
         pipeline_name: String,
 
         /// The original goal/objective
@@ -52,7 +55,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Init => {
             let mut config = config::Config::default();
-            config.llm.invocation = "gpt-4o".to_string();
+            config.llm.invocation = "gpt-4o {{prompt}}".to_string();
 
             let mut pipelines = std::collections::HashMap::new();
             pipelines.insert(
@@ -62,7 +65,8 @@ fn main() -> Result<()> {
                         id: "refiner-1".to_string(),
                         name: "Initial Refiner".to_string(),
                         aspect_type: crate::models::AspectType::Refiner,
-                        description: "A basic refiner to get started".to_string(),
+                        prompt: "A basic refiner to get started".to_string(),
+                        model: None,
                     })],
                 },
             );
@@ -70,11 +74,11 @@ fn main() -> Result<()> {
 
             let toml_string = toml::to_string_pretty(&config)?;
             let action = WriteConfig {
-                path: PathBuf::from("config.toml"),
+                path: cli.config_file.clone(),
                 content: toml_string,
             };
             action.run(&ctx)?;
-            println!("Created config.toml with default settings.");
+            println!("Created {:?} with default settings.", cli.config_file);
         }
         Commands::Run {
             pipeline_name,
@@ -82,14 +86,16 @@ fn main() -> Result<()> {
             draft,
             prompts,
         } => {
-            let config = config::Config::load(&ctx, PathBuf::from("config.toml"))?;
+            let config = config::Config::load(&ctx, cli.config_file)?;
             let aspects = config.resolve_pipeline(&ctx, &pipeline_name)?;
 
             let state = PipelineState::new(draft, goal, aspects);
 
-            let client = llm::ConfigurableLlmClient {
-                invocation: config.llm.invocation,
-            };
+                let client = llm::ConfigurableLlmClient {
+                    invocation: config.llm.invocation,
+                    system_prompt: config.llm.system_prompt,
+                    default_model: config.llm.default_model,
+                };
 
             let driver = Driver::new(client, prompts);
             let result = driver.run(state)?;

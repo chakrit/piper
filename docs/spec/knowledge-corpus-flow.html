@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Piper Knowledge Corpus Flow</title>
+  <style>
+    body { 
+      font-family: sans-serif; 
+      color: #333; 
+      background: #fff; 
+      display: flex; 
+      justify-content: center; 
+      padding: 40px; 
+    }
+    #piper-viz { 
+      padding: 20px; 
+      border-radius: 12px; 
+      border: 1px solid #ddd; 
+      max-width: 800px;
+    }
+    .flow-container { display: flex; flex-direction: column; gap: 30px; align-items: center; }
+    .step-row { display: flex; gap: 20px; align-items: center; position: relative; }
+    .node { 
+      padding: 12px; border: 1px solid #ccc; border-radius: 6px; 
+      background: #f9f9f9; width: 160px; text-align: center; 
+      transition: all 0.3s ease; opacity: 0.5;
+    }
+    .node.active { 
+      opacity: 1; border-color: #007bff; box-shadow: 0 0 8px rgba(0,123,255,0.3);
+      background: #fff; transform: scale(1.05);
+    }
+    .node.completed { opacity: 1; border-color: #28a745; }
+    .corpus-box { 
+      width: 500px; padding: 15px; border: 2px dashed #ccc; 
+      border-radius: 8px; background: #fafafa; text-align: left;
+      min-height: 60px; transition: all 0.3s ease;
+    }
+    .corpus-box.updated { border-color: #007bff; background: #eef7ff; }
+    .corpus-entry { font-family: monospace; font-size: 12px; margin-bottom: 4px; display: block; }
+    .controls { margin-bottom: 30px; display: flex; gap: 10px; justify-content: center; }
+    .btn { 
+      padding: 8px 16px; cursor: pointer; border-radius: 4px; 
+      border: 1px solid #ccc; background: #fff; font-weight: 500;
+    }
+    .btn:hover { background: #eee; }
+    .arrow { color: #888; font-weight: bold; }
+    .label { font-size: 12px; color: #666; margin-bottom: 5px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="piper-viz">
+    <h2 style="text-align: center; margin-top: 0;">Piper Knowledge Corpus Flow</h2>
+    
+    <div class="controls">
+      <button class="btn" onclick="resetFlow()">Reset</button>
+      <button class="btn" onclick="nextStep()">Next Step &rarr;</button>
+    </div>
+
+    <div class="flow-container">
+      <div class="step-row">
+        <div id="node-init" class="node active">
+          <strong>Initial State</strong><br/>
+          <span style="font-size: 11px;">Goal + Draft</span>
+        </div>
+        <div class="arrow">&rarr;</div>
+        <div id="node-a1" class="node">
+          <strong>Aspect 1</strong><br/>
+          <span style="font-size: 11px;">Refining...</span>
+        </div>
+        <div class="arrow">&rarr;</div>
+        <div id="node-a2" class="node">
+          <strong>Aspect 2</strong><br/>
+          <span style="font-size: 11px;">Refining...</span>
+        </div>
+        <div class="arrow">&rarr;</div>
+        <div id="node-an" class="node">
+          <strong>Aspect N</strong><br/>
+          <span style="font-size: 11px;">Refining...</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 10px;">
+        <div class="label">Durable Truth Store (The Corpus)</div>
+        <div id="corpus" class="corpus-box">
+          <span style="color: #999; font-style: italic;">Corpus is currently empty...</span>
+        </div>
+      </div>
+
+      <div class="step-row">
+        <div class="arrow" style="transform: rotate(90deg); margin-left: 400px;">&darr;</div>
+        <div id="node-synth" class="node">
+          <strong>Final Synthesis</strong><br/>
+          <span style="font-size: 11px;">Reconciling all truths</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let currentStep = 0;
+      const steps = [
+        { id: 'node-init', corpus: [], msg: 'Starting with basic inputs.' },
+        { id: 'node-a1', corpus: ['[brevity-1]: Keep under 40 words.'], msg: 'Aspect 1 adds a durable truth to the corpus.' },
+        { id: 'node-a2', corpus: ['[brevity-1]: Keep under 40 words.', '[prof-1]: Use consulting-grade tone.'], msg: 'Aspect 2 sees [brevity-1] and adds [prof-1].' },
+        { id: 'node-an', corpus: ['[brevity-1]: Keep under 40 words.', '[prof-1]: Use consulting-grade tone.', '[tech-1]: Mention State-Machine.'], msg: 'Aspect N sees all previous truths before refining.' },
+        { id: 'node-synth', corpus: ['[brevity-1]: Keep under 40 words.', '[prof-1]: Use consulting-grade tone.', '[tech-1]: Mention State-Machine.'], msg: 'Synthesis uses the full corpus to finalize the draft.' }
+      ];
+
+      function updateUI() {
+        document.querySelectorAll('.node').forEach(n => n.classList.remove('active'));
+        
+        steps.forEach((step, idx) => {
+          const el = document.getElementById(step.id);
+          if (idx < currentStep) el.classList.add('completed');
+          if (idx === currentStep) el.classList.add('active');
+        });
+
+        const corpusEl = document.getElementById('corpus');
+        const currentCorpus = steps[currentStep].corpus;
+        
+        if (currentCorpus.length === 0) {
+          corpusEl.innerHTML = '<span style="color: #999; font-style: italic;">Corpus is currently empty...</span>';
+        } else {
+          corpusEl.innerHTML = currentCorpus.map(item => '<span class="corpus-entry">' + item + '</span>').join('');
+        }
+        
+        corpusEl.classList.add('updated');
+        setTimeout(() => corpusEl.classList.remove('updated'), 500);
+      }
+
+      function nextStep() {
+        if (currentStep < steps.length - 1) {
+          currentStep++;
+          updateUI();
+        }
+      }
+
+      function resetFlow() {
+        currentStep = 0;
+        document.querySelectorAll('.node').forEach(n => n.classList.remove('completed'));
+        updateUI();
+      }
+
+      updateUI();
+    </script>
+  </div>
+</body>
+</html>

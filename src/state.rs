@@ -1,11 +1,13 @@
 use crate::models::Aspect;
 use anyhow::Result;
+use std::collections::HashMap;
 
 pub struct PipelineState {
     pub working_draft: String,
     pub original_goal: String,
     pub current_index: usize,
     pub aspects: Vec<Aspect>,
+    pub corpus: HashMap<String, String>,
 }
 
 impl PipelineState {
@@ -15,6 +17,7 @@ impl PipelineState {
             original_goal,
             current_index: 0,
             aspects,
+            corpus: HashMap::new(),
         }
     }
 

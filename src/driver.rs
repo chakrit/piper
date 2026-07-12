@@ -62,15 +62,36 @@ impl<C: LlmClient> Driver<C> {
                 }
                 AspectType::Refiner => {
                     let template = self.load_prompt("aspect-refiner.md")?;
+                    
+                    let mut corpus_text = Vec::new();
+                    for aspect_item in &state.aspects {
+                        if let Some(k) = state.corpus.get(&aspect_item.id) {
+                            corpus_text.push(format!("[{}]: {}", aspect_item.id, k));
+                        }
+                    }
+
                     let prompt = template
                         .replace("{{aspect_name}}", &aspect.name)
-                        .replace("{{aspect_description}}", &aspect.description)
-                        .replace("{{current_draft}}", &state.working_draft);
+                        .replace("{{aspect_prompt}}", &aspect.prompt)
+                        .replace("{{aspect_id}}", &aspect.id)
+                        .replace("{{current_draft}}", &state.working_draft)
+                        .replace("{{goal}}", &state.original_goal)
+                        .replace("{{corpus}}", &corpus_text.join("\n"));
 
-                    let response = self.client.call(&prompt)?;
+                    let response = self.client.call(&prompt, aspect.model.as_deref())?;
+                    
+                    // Update corpus with the knowledge layer added by this aspect
+                    state.corpus.extend(response.knowledge.clone());
+                    
+                    let final_draft = response.refined_draft.clone();
                     state.working_draft = response.refined_draft;
-
+                    
                     println!("[Driver] Violations found: {}", response.violations_found);
+                    
+                    if response.terminate {
+                        println!("[Driver] LLM signaled termination.");
+                        return Ok(final_draft);
+                    }
 
                     if let Some(next_id) = response.next_aspect_id {
                         println!("[Driver] LLM signaled jump to: {}", next_id);
@@ -82,15 +103,6 @@ impl<C: LlmClient> Driver<C> {
             }
         }
 
-        println!("\n>>> Performing Final Synthesis...");
-        let synth_template = self.load_prompt("final-alignment.md")?;
-        let aspect_list: Vec<String> = state.aspects.iter().map(|a| a.name.clone()).collect();
-        let final_prompt = synth_template
-            .replace("{{original_goal}}", &state.original_goal)
-            .replace("{{final_draft}}", &state.working_draft)
-            .replace("{{aspect_list}}", &aspect_list.join(", "));
-
-        let final_resp = self.client.call(&final_prompt)?;
-        Ok(final_resp.refined_draft)
+        Ok(state.working_draft)
     }
 }

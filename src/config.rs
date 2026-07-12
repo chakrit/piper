@@ -11,10 +11,24 @@ pub struct Config {
     pub pipelines: HashMap<String, Pipeline>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system_prompt.txt");
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
     pub invocation: String,
+    pub system_prompt: String,
+    pub default_model: String,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            invocation: String::new(),
+            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            default_model: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -72,12 +86,13 @@ mod tests {
         pipelines.insert(
             "test".to_string(),
             Pipeline {
-                aspects: vec![AspectStep::Inline(Aspect {
-                    id: "1".to_string(),
-                    name: "N1".to_string(),
-                    aspect_type: crate::models::AspectType::Refiner,
-                    description: "D1".to_string(),
-                })],
+                    aspects: vec![AspectStep::Inline(Aspect {
+                        id: "1".to_string(),
+                        name: "N1".to_string(),
+                        aspect_type: crate::models::AspectType::Refiner,
+                        prompt: "D1".to_string(),
+                        model: None,
+                    })],
             },
         );
 
@@ -100,7 +115,7 @@ mod tests {
             id = "ref-1"
             name = "Refined"
             aspect_type = "refiner"
-            description = "Desc"
+            prompt = "Desc"
         "#;
         std::fs::write(&aspect_path, aspect_toml).unwrap();
 
@@ -131,5 +146,32 @@ mod tests {
         let ctx = crate::actions::AppContext;
         let result = config.resolve_pipeline(&ctx, "nonexistent");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_pipeline_with_model_overrides() {
+
+        let mut pipelines = HashMap::new();
+        pipelines.insert(
+            "test".to_string(),
+            Pipeline {
+                aspects: vec![AspectStep::Inline(Aspect {
+                    id: "1".to_string(),
+                    name: "N1".to_string(),
+                    aspect_type: crate::models::AspectType::Refiner,
+                    prompt: "D1".to_string(),
+                    model: Some("custom-model".to_string()),
+                })],
+            },
+        );
+
+        let config = Config {
+            pipelines,
+            ..Default::default()
+        };
+        let ctx = crate::actions::AppContext;
+
+        let resolved = config.resolve_pipeline(&ctx, "test").unwrap();
+        assert_eq!(resolved[0].model, Some("custom-model".to_string()));
     }
 }
