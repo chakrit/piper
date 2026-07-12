@@ -49,7 +49,9 @@ pub enum AspectAction {
 
 impl Default for AspectAction {
     fn default() -> Self {
-        Self::Refine { draft: String::new() }
+        Self::Refine {
+            draft: String::new(),
+        }
     }
 }
 

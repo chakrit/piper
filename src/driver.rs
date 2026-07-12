@@ -69,10 +69,18 @@ impl<C: LlmClient> Driver<C> {
 
         while state.current_index < state.aspects.len() {
             let aspect = state.current_aspect().clone();
-            let fork_info = state.fork_id.as_ref()
+            let fork_info = state
+                .fork_id
+                .as_ref()
                 .map(|id| format!("[Fork: {}]", id))
                 .unwrap_or_default();
-            println!("\n{} >>> Processing: {} ({} - {})", fork_info, aspect.name, aspect.aspect_type.label(), aspect.id);
+            println!(
+                "\n{} >>> Processing: {} ({} - {})",
+                fork_info,
+                aspect.name,
+                aspect.aspect_type.label(),
+                aspect.id
+            );
 
             match aspect.aspect_type {
                 AspectType::Gate => {
@@ -82,14 +90,16 @@ impl<C: LlmClient> Driver<C> {
                     state.current_index += 1;
                 }
                 AspectType::Refiner => {
+                    ctx.consume_turn(state.max_turns)?;
                     let template = self.load_prompt("aspect-refiner.md")?;
-                    
-                    let mut corpus_text = Vec::new();
-                    for aspect_item in &state.aspects {
-                        if let Some(k) = state.corpus.get(&aspect_item.id) {
-                            corpus_text.push(format!("[{}]: {}", aspect_item.id, k));
-                        }
-                    }
+
+                    let mut corpus_text: Vec<_> = state.corpus.iter().collect();
+                    corpus_text.sort_unstable_by_key(|(key, _)| *key);
+                    let corpus_text = corpus_text
+                        .into_iter()
+                        .map(|(key, value)| format!("[{key}]: {value}"))
+                        .collect::<Vec<_>>()
+                        .join("\n");
 
                     let prompt = template
                         .replace("{{aspect_name}}", &aspect.name)
@@ -97,24 +107,28 @@ impl<C: LlmClient> Driver<C> {
                         .replace("{{aspect_id}}", &aspect.id)
                         .replace("{{current_draft}}", &state.working_draft)
                         .replace("{{goal}}", &state.original_goal)
-                        .replace("{{fork_prompt}}", state.fork_prompt.as_deref().unwrap_or(""))
-                        .replace("{{corpus}}", &corpus_text.join("\n"));
+                        .replace(
+                            "{{fork_prompt}}",
+                            state.fork_prompt.as_deref().unwrap_or(""),
+                        )
+                        .replace("{{corpus}}", &corpus_text);
 
                     let raw_response = self.client.call(&prompt, aspect.model.as_deref())?;
-                    
+
                     let response = match self.parse_response(&raw_response) {
                         Ok(res) => res,
                         Err(_) => {
                             println!("[Driver] Parsing failed. Attempting recovery...");
-                            let recover_template = self.load_prompt("aspect-recover.md")
-                                .unwrap_or_else(|_| "Please reformat the following response into valid JSON based on the required schema.".to_string());
-                            
-                            let recover_prompt = format!("{}\n\nBad Response:\n{}", recover_template, raw_response);
-                            let recovered_raw = self.client.call(&recover_prompt, aspect.model.as_deref())?;
+                            let recover_template = self.load_prompt("aspect-recover.md")?;
+
+                            let recover_prompt =
+                                format!("{}\n\nBad Response:\n{}", recover_template, raw_response);
+                            let recovered_raw =
+                                self.client.call(&recover_prompt, aspect.model.as_deref())?;
                             self.parse_response(&recovered_raw)?
                         }
                     };
-                    
+
                     println!("[Driver] Violations found: {}", response.violations_found);
 
                     let mut jumped = false;
@@ -125,12 +139,18 @@ impl<C: LlmClient> Driver<C> {
                                 state.working_draft = draft;
                             }
                             AspectAction::AddKnowledge { key, value } => {
-                                state.corpus.insert(key, value);
+                                state.corpus.insert(state.corpus_key(&key), value);
                             }
                             AspectAction::EditKnowledge { key, value } => {
-                                state.corpus.insert(key, value);
+                                state.corpus.insert(state.corpus_key(&key), value);
                             }
-                            AspectAction::Fork { id, prompt, goal, draft, start_aspect_id } => {
+                            AspectAction::Fork {
+                                id,
+                                prompt,
+                                goal,
+                                draft,
+                                start_aspect_id,
+                            } => {
                                 let mut fork_state = PipelineState {
                                     fork_id: Some(id.clone()),
                                     fork_prompt: Some(prompt),
@@ -139,11 +159,12 @@ impl<C: LlmClient> Driver<C> {
                                     current_index: 0,
                                     aspects: state.aspects.clone(),
                                     corpus: state.corpus.clone(),
+                                    max_turns: state.max_turns,
                                 };
                                 if let Some(sid) = start_aspect_id {
                                     fork_state.jump_to_id(&sid)?;
                                 }
-                                
+
                                 let fork_results = self.run(ctx, fork_state)?;
                                 if let Some(last_res) = fork_results.last().cloned() {
                                     ctx.fork_results.insert(id, last_res);
@@ -162,6 +183,9 @@ impl<C: LlmClient> Driver<C> {
                                         state.working_draft.push_str(" ---\n");
                                         state.working_draft.push_str(res);
                                     }
+                                    if let Some(corpus) = ctx.fork_corpora.get(&fid) {
+                                        state.corpus.extend(corpus.clone());
+                                    }
                                 }
                             }
                             AspectAction::Terminate => {
@@ -173,6 +197,10 @@ impl<C: LlmClient> Driver<C> {
                     if terminated {
                         println!("[Driver] LLM signaled termination.");
                         all_results.push(state.working_draft);
+                        if let Some(fork_id) = &state.fork_id {
+                            ctx.fork_corpora
+                                .insert(fork_id.clone(), state.corpus.clone());
+                        }
                         return Ok(all_results);
                     }
 
@@ -184,6 +212,10 @@ impl<C: LlmClient> Driver<C> {
         }
 
         all_results.push(state.working_draft);
+        if let Some(fork_id) = &state.fork_id {
+            ctx.fork_corpora
+                .insert(fork_id.clone(), state.corpus.clone());
+        }
         Ok(all_results)
     }
 }
@@ -216,7 +248,9 @@ mod tests {
 
         let parent_resp = serde_json::to_string(&LlmResponse {
             actions: vec![
-                AspectAction::Refine { draft: "Parent Updated".to_string() },
+                AspectAction::Refine {
+                    draft: "Parent Updated".to_string(),
+                },
                 AspectAction::Fork {
                     id: "f1".to_string(),
                     prompt: "p1".to_string(),
@@ -224,18 +258,28 @@ mod tests {
                     draft: "Draft 1".to_string(),
                     start_aspect_id: None,
                 },
-                AspectAction::Merge { fork_ids: vec!["f1".to_string()] },
+                AspectAction::Merge {
+                    fork_ids: vec!["f1".to_string()],
+                },
             ],
             violations_found: 0,
-        }).unwrap();
+        })
+        .unwrap();
 
         let fork_resp = serde_json::to_string(&LlmResponse {
             actions: vec![
-                AspectAction::Refine { draft: "Fork 1 Final".to_string() },
+                AspectAction::Refine {
+                    draft: "Fork 1 Final".to_string(),
+                },
+                AspectAction::AddKnowledge {
+                    key: "tdd-red".to_string(),
+                    value: "The behavior needs a failing test.".to_string(),
+                },
                 AspectAction::Terminate,
             ],
             violations_found: 0,
-        }).unwrap();
+        })
+        .unwrap();
 
         let client = MockLlmClient {
             responses: Mutex::new(vec![parent_resp, fork_resp]),
@@ -257,12 +301,102 @@ mod tests {
                 model: None,
             }],
             corpus: std::collections::HashMap::new(),
+            max_turns: std::num::NonZeroUsize::new(10).expect("turn limit is non-zero"),
         };
 
         let results = driver.run(&mut ctx, state).unwrap();
-        
+
         assert_eq!(results.len(), 2);
         assert!(results.contains(&"Fork 1 Final".to_string()));
         assert!(results.iter().any(|r| r.contains("Fork 1 Final")));
+        assert_eq!(
+            ctx.fork_corpora
+                .get("f1")
+                .and_then(|corpus| corpus.get("f1/tdd-red")),
+            Some(&"The behavior needs a failing test.".to_string())
+        );
+    }
+
+    #[test]
+    fn test_run_stops_when_turn_limit_is_reached() {
+        let temp_dir = std::env::temp_dir().join("piper_tests_turn_limit");
+        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
+        std::fs::write(temp_dir.join("aspect-refiner.md"), "Mock template")
+            .expect("test prompt should be written");
+
+        let jump_response = serde_json::to_string(&LlmResponse {
+            actions: vec![AspectAction::Jump {
+                id: "a1".to_string(),
+            }],
+            violations_found: 0,
+        })
+        .expect("response should serialize");
+
+        let client = MockLlmClient {
+            responses: Mutex::new(vec![jump_response.clone(), jump_response]),
+        };
+        let driver = Driver::new(client, temp_dir);
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Initial".to_string(),
+            "Goal".to_string(),
+            vec![Aspect {
+                id: "a1".to_string(),
+                name: "Aspect 1".to_string(),
+                aspect_type: AspectType::Refiner,
+                prompt: "Prompt".to_string(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
+        );
+
+        let error = driver
+            .run(&mut ctx, state)
+            .expect_err("loop should hit the turn limit");
+        assert!(error.to_string().contains("max_turns limit of 2"));
+    }
+
+    #[test]
+    fn test_run_recovers_a_malformed_worker_response() {
+        let temp_dir = std::env::temp_dir().join("piper_tests_recovery");
+        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
+        std::fs::write(temp_dir.join("aspect-refiner.md"), "Mock template")
+            .expect("worker template should be written");
+        std::fs::write(temp_dir.join("aspect-recover.md"), "Recovery template")
+            .expect("recovery template should be written");
+
+        let recovered_response = serde_json::to_string(&LlmResponse {
+            actions: vec![
+                AspectAction::Refine {
+                    draft: "Recovered draft".to_string(),
+                },
+                AspectAction::Terminate,
+            ],
+            violations_found: 0,
+        })
+        .expect("response should serialize");
+
+        let client = MockLlmClient {
+            responses: Mutex::new(vec!["not JSON".to_string(), recovered_response]),
+        };
+        let driver = Driver::new(client, temp_dir);
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Initial".to_string(),
+            "Goal".to_string(),
+            vec![Aspect {
+                id: "a1".to_string(),
+                name: "Aspect 1".to_string(),
+                aspect_type: AspectType::Refiner,
+                prompt: "Prompt".to_string(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
+        );
+
+        let results = driver
+            .run(&mut ctx, state)
+            .expect("recovery should succeed");
+        assert_eq!(results, vec!["Recovered draft"]);
     }
 }

@@ -1,79 +1,139 @@
 # AOP Engine Specification
 
-- **Status:** accepted
-- **Scope:** Core Driver and Integration Contracts
+- **Status:** implemented
+- **Scope:** Piper's driver, pipeline configuration, prompt templates, and Worker Lens protocol.
 
-## Overview
+## Purpose
 
-The **Aspect-Oriented Prompting (AOP) Engine** minimizes instruction drift in LLM outputs by decomposing complex alignment constraints into modular "Aspects". Instead of a single monolithic prompt, the engine pipes a working draft through a sequence of specialized lenses, each responsible for exactly one dimension of alignment (e.g., Security, Brand, UX).
+Piper reduces instruction drift by sending a draft through small, ordered Aspect lenses.
+Each lens returns a machine-readable action list, and the driver applies those actions to
+the current pipeline state. The driver never performs an implicit synthesis pass; a
+pipeline that needs a final review models it as a normal Aspect.
 
-### Core Workflow
-The engine follows a strict state-machine transition:
-`INPUT` $\rightarrow$ (`ASPECT_1` $\rightarrow$ `ASPECT_2` $\rightarrow$ ... $\rightarrow$ `ASPECT_N`) $\rightarrow$ `SYNTHESIS` $\rightarrow$ `OUTPUT`
+## State and execution
 
-## The Driver (State Machine)
+`PipelineState` contains the working draft, original goal, ordered Aspects, current
+position, corpus, optional fork ID and prompt, and a non-zero turn limit. A `SessionContext`
+is shared by the root pipeline and every fork. It records completed fork results, completed
+fork corpora, and the total number of Worker Lens calls.
 
-The `PipedPiperEngine` manages the global state and orchestrates the movement of the draft through the pipeline.
+The normal transition is:
 
-### State Management
-- **`working_draft`**: The primary state variable. It is initialized with the `initial_draft` and updated after every Aspect pass.
-- **`corpus`**: A persistent key-value store enabling Aspects to pass metadata or extracted knowledge to subsequent steps.
-- **Pipeline**: A deterministic sequence of Aspects loaded from a TOML configuration.
+`INPUT → ASPECT_1 → … → ASPECT_N → OUTPUT`
 
-### Execution Logic
-1. **Aspect Loop**: 
-   - For each Aspect in the pipeline:
-     - Load the `aspect-refiner.md` template.
-     - Inject the Aspect's metadata (`name`, `description`), the `working_draft`, and the current `corpus`.
-     - Execute the LLM call.
-     - Parse the structured JSON response to extract:
-       - `refined_draft`: Updates the `working_draft`.
-       - `violations_found`: Numeric count of alignment failures.
-       - `knowledge`: Merged into the global `corpus`.
-       - `terminate`: If true, the engine skips remaining Aspects and jumps to synthesis.
-       - `next_aspect_id`: If present, the engine jumps to the specified Aspect ID, overriding the linear sequence.
-2. **Synthesis Pass**:
-   - Load the `final-alignment.md` template.
-   - Inject the `original_goal`, the `final_draft` (the result of the loop), and the list of Aspects applied.
-   - Execute a final LLM call to ensure cohesion and joint alignment.
+For a `refiner`, the driver loads `aspect-refiner.md`, substitutes the template variables,
+calls the configured LLM, parses its response, then applies every returned action in order.
+If no action jumps or terminates, the driver advances to the next Aspect. A `gate` instead
+pauses for a human to continue, edit the draft, or abort.
 
-## Integration Contracts
+Every Worker Lens call consumes one turn. The shared `max_turns` limit prevents unbounded
+jump and fork loops; reaching it fails the run before another LLM call. Gates do not
+consume turns.
 
-### 1. Pipeline Schema (TOML)
-Pipelines are defined in `piper.toml` as named tables containing an array of aspects:
+If the first response cannot be parsed as the action JSON object, the driver makes one
+recovery call using `aspect-recover.md`. A recovery response that is still invalid fails
+the run.
+
+## Pipeline configuration
+
+Pipelines live in TOML. `max_turns` is optional and defaults to `100`; it must be at least
+one. Aspect files use `type`, not `aspect_type`.
+
 ```toml
+[llm]
+invocation = "opencode run -m {{model}} {{prompt}}"
+system_prompt = "You are a precise AOP worker."
+default_model = "cerebras/gemma-4-31b"
+
 [[pipelines.rigour.aspects]]
 id = "spec-align"
 name = "Spec Alignment"
 type = "refiner"
-prompt = "Ensure draft matches specifications..."
+prompt = "Ensure the draft matches accepted specifications."
+model = "optional-model-override"
+
+[[pipelines.rigour.aspects]]
+id = "review"
+name = "Human Review"
+type = "gate"
+prompt = ""
+
+[pipelines.rigour]
+max_turns = 50
 ```
 
-### 2. Worker Lens Output (Aspect Response)
-The LLM serving as a Worker Lens must return a JSON object:
+An aspect entry may instead reference a TOML file:
+
+```toml
+[[pipelines.rigour.aspects]]
+file = "aspects/spec-align.toml"
+```
+
+The `run` command accepts a pipeline name, `--goal`, `--draft`, and an optional `--prompts`
+directory. Its default prompt directory is `skills/piper/prompts`. `--file` selects the
+configuration file and defaults to `piper.toml`.
+
+## Worker Lens action protocol
+
+Each response is one JSON object with an ordered `actions` array and a numeric
+`violations_found` count. Omit actions that are not needed.
+
 ```json
 {
-  "refined_draft": "The updated text",
-  "violations_found": 0,
-  "next_aspect_id": "optional-id",
-  "knowledge": {
-    "key": "value"
-  },
-  "terminate": false
+  "actions": [
+    { "refine": { "draft": "Updated draft" } },
+    { "add_knowledge": { "key": "spec-align", "value": "Preserve API compatibility." } },
+    { "jump": { "id": "review" } }
+  ],
+  "violations_found": 0
 }
 ```
 
-### 3. LLM Interface
-The driver defines a `call_llm(prompt: str) -> str` hook. Any integration must implement this method to handle the actual API communication.
+| Action | Effect |
+| --- | --- |
+| `refine` | Replaces the working draft. |
+| `add_knowledge` | Inserts a durable corpus entry. |
+| `edit_knowledge` | Replaces a durable corpus entry. |
+| `jump` | Sets the next Aspect by ID instead of advancing sequentially. |
+| `fork` | Starts a nested pipeline with its own ID, prompt, goal, draft, and optional starting Aspect ID. |
+| `merge` | Appends each completed fork result to the working draft and merges its namespaced corpus entries. |
+| `terminate` | Stops the current pipeline and returns its current draft. |
 
-## Template Variable Map
+Actions execute in array order. A `jump` changes control flow after all actions in the
+current response have applied. `terminate` ends that pipeline after the response's other
+actions have applied.
 
-| Template | Variable | Source | Description |
-|-----------|-----------|--------|-------------|
-| `aspect-refiner.md` | `{{aspect_name}}` | Pipeline TOML | The name of the current Aspect. |
-| `aspect-refiner.md` | `{{aspect_description}}` | Pipeline TOML | The specific constraints for this Aspect. |
-| `aspect-refiner.md` | `{{current_draft}}` | Engine State | The current `working_draft`. |
-| `aspect-refiner.md` | `{{corpus}}` | Engine State | The current global knowledge map. |
-| `final-alignment.md`| `{{original_goal}}` | CLI Arg | The user's intended outcome. |
-| `final-alignment.md`| `{{final_draft}}` | Engine State | The result after all Aspect passes. |
-| `final-alignment.md`| `{{aspect_list}}` | Pipeline TOML | Comma-separated list of applied Aspects. |
+## Corpus and forks
+
+The corpus is a map of durable constraints injected into every later refiner prompt. Root
+pipeline keys are written as provided. A fork automatically writes each of its keys under
+`fork-id/key`, for example `alternative/tdd-red`. This prevents sibling and parent
+collisions while keeping provenance visible.
+
+A fork begins with a copy of the parent corpus. When a parent runs `merge`, the driver's
+current implementation appends the fork's final draft under a labeled delimiter and copies
+the fork's corpus entries into the parent corpus. Because fork-owned keys are namespaced,
+only an explicit merge makes their new discoveries available to later parent Aspects.
+
+Forks execute synchronously and recursively. A fork can itself fork or merge, subject to
+the same shared turn limit.
+
+## Templates
+
+| Template | Role | Variables |
+| --- | --- | --- |
+| `aspect-refiner.md` | Worker Lens request | `aspect_name`, `aspect_id`, `aspect_prompt`, `current_draft`, `goal`, `fork_prompt`, `corpus` |
+| `aspect-recover.md` | One-shot formatter recovery | The rejected raw response is appended by the driver. |
+| `aspect-definition.md` | Human/LLM aid for designing a pipeline | No driver substitution. |
+
+`final-alignment.md` is intentionally absent. Final alignment is an ordinary, explicit
+Aspect when a pipeline requires it.
+
+## Known limitations
+
+- A merge concatenates output; it does not semantically reconcile divergent drafts. Use a
+  later refiner Aspect to synthesize branches when needed.
+- The action protocol does not yet validate duplicate fork IDs, references to incomplete
+  forks, or action combinations beyond their runtime effects.
+- The LLM invocation is split on whitespace, so command templates cannot safely express
+  shell-style quoting. The invocation must include `{{prompt}}`; `{{model}}` is optional.

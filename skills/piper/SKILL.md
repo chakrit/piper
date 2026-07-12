@@ -31,30 +31,32 @@ The Piper architecture consists of a **Deterministic Driver** (a small
 program) and **Worker Lenses** (LLM calls).
 
 ### 1. Pipeline Definition
-A **Pipeline** is a structured sequence of Aspects (defined in `pipelines/`). Each
-Aspect contains a name and a rigorous lens description.
+A **Pipeline** is a structured sequence of Aspects in `piper.toml`. Each Aspect has an
+ID, name, type, prompt, and optional model override. A pipeline also declares a
+`max_turns` safety limit (100 by default) shared by the root execution and its forks.
 
 ### 2. The Autonomous Loop (The State Machine)
-The Driver program executes the following state transitions:
-`INPUT` $\rightarrow$ `ASPECT_1` $\rightarrow$ `ASPECT_2` $\rightarrow$ ... $\rightarrow$
-`ASPECT_N` $\rightarrow$ `SYNTHESIS` $\rightarrow$ `OUTPUT`
+The Driver program begins with the first Aspect and normally advances sequentially.
+Each Worker Lens returns an ordered JSON action list. Actions can refine the draft,
+add or edit corpus knowledge, jump to an Aspect, fork a branch, merge completed fork
+results, or terminate. Gates pause for human review. There is no implicit final-synthesis
+pass; model a final pass explicitly as an Aspect if one is needed.
 
 For each transition:
 1. **Provision Worker**: The Driver creates a fresh LLM context.
 2. **Inject Aspect**: The Driver provides the current Working Draft + Aspect Lens +
    Machine-Parsable Output requirement.
-3. **Parse Output**: The Driver extracts the refined draft from the Worker's
-   structured response (JSON).
-4. **Update State**: The extracted draft becomes the global "Working Draft" for the
-   next state.
+3. **Parse Output**: The Driver validates the Worker's structured action response. If
+   the first parse fails, it makes one recovery call using `aspect-recover.md`.
+4. **Update State**: The Driver applies actions in order. Fork corpus entries are
+   namespaced as `fork-id/key`, avoiding collisions with root and sibling branches.
 
-### 3. Final Synthesis
-The Driver performs a final "Joint Alignment" pass to ensure cohesion across the
-piped edits.
+The engine specification in `docs/spec/aop-engine.md` is the source of truth for the
+configuration and action protocol.
 
 ## Automation & Apparatus
 
-- **`pipelines/`**: JSON definitions of Aspect sequences.
+- **`piper.toml`**: TOML definitions of Aspect sequences and their turn limits.
 - **`piper` (Rust binary)**: The high-performance state-machine driver that automates the pipe, supports human-in-the-loop "Stop-Gates", and allows for LLM-triggered "Rewinds" to previous aspects.
 - **`prompts/`**: Templated prompts that enforce machine-parsable output for Worker
   Lenses.

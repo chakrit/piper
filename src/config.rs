@@ -2,6 +2,7 @@ use crate::models::Aspect;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -31,10 +32,27 @@ impl Default for LlmConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+pub const DEFAULT_MAX_TURNS: usize = 100;
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Pipeline {
+    pub max_turns: usize,
     pub aspects: Vec<AspectStep>,
+}
+
+impl Default for Pipeline {
+    fn default() -> Self {
+        Self {
+            max_turns: DEFAULT_MAX_TURNS,
+            aspects: Vec::new(),
+        }
+    }
+}
+
+pub struct ResolvedPipeline {
+    pub aspects: Vec<Aspect>,
+    pub max_turns: NonZeroUsize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,13 +65,24 @@ pub enum AspectStep {
 impl Config {
     pub fn load(ctx: &crate::actions::AppContext, path: PathBuf) -> Result<Self> {
         let action = crate::actions::ReadConfig { path };
-        let content = action.run(ctx).with_context(|| "Could not read config file".to_string())?;
+        let content = action
+            .run(ctx)
+            .with_context(|| "Could not read config file".to_string())?;
         toml::from_str(&content).context("Failed to parse TOML config")
     }
 
-    pub fn resolve_pipeline(&self, ctx: &crate::actions::AppContext, name: &str) -> Result<Vec<Aspect>> {
-        let pipeline = self.pipelines.get(name)
+    pub fn resolve_pipeline(
+        &self,
+        ctx: &crate::actions::AppContext,
+        name: &str,
+    ) -> Result<ResolvedPipeline> {
+        let pipeline = self
+            .pipelines
+            .get(name)
             .with_context(|| format!("Pipeline '{}' not found in config", name))?;
+
+        let max_turns = NonZeroUsize::new(pipeline.max_turns)
+            .with_context(|| format!("Pipeline '{}' must set max_turns to at least 1", name))?;
 
         let mut resolved = Vec::new();
         for step in &pipeline.aspects {
@@ -63,7 +92,8 @@ impl Config {
                 }
                 AspectStep::Reference { file } => {
                     let action = crate::actions::ReadAspectFile { path: file.clone() };
-                    let content = action.run(ctx)
+                    let content = action
+                        .run(ctx)
                         .with_context(|| format!("Could not read aspect file {:?}", file))?;
                     let aspect: Aspect = toml::from_str(&content)
                         .with_context(|| format!("Failed to parse aspect TOML in {:?}", file))?;
@@ -71,7 +101,10 @@ impl Config {
                 }
             }
         }
-        Ok(resolved)
+        Ok(ResolvedPipeline {
+            aspects: resolved,
+            max_turns,
+        })
     }
 }
 
@@ -86,13 +119,14 @@ mod tests {
         pipelines.insert(
             "test".to_string(),
             Pipeline {
-                    aspects: vec![AspectStep::Inline(Aspect {
-                        id: "1".to_string(),
-                        name: "N1".to_string(),
-                        aspect_type: crate::models::AspectType::Refiner,
-                        prompt: "D1".to_string(),
-                        model: None,
-                    })],
+                aspects: vec![AspectStep::Inline(Aspect {
+                    id: "1".to_string(),
+                    name: "N1".to_string(),
+                    aspect_type: crate::models::AspectType::Refiner,
+                    prompt: "D1".to_string(),
+                    model: None,
+                })],
+                ..Default::default()
             },
         );
 
@@ -102,9 +136,12 @@ mod tests {
         };
         let ctx = crate::actions::AppContext;
 
-        let resolved = config.resolve_pipeline(&ctx, "test").unwrap();
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].id, "1");
+        let resolved = config
+            .resolve_pipeline(&ctx, "test")
+            .expect("pipeline should resolve");
+        assert_eq!(resolved.aspects.len(), 1);
+        assert_eq!(resolved.aspects[0].id, "1");
+        assert_eq!(resolved.max_turns.get(), DEFAULT_MAX_TURNS);
     }
 
     #[test]
@@ -114,7 +151,7 @@ mod tests {
         let aspect_toml = r#"
             id = "ref-1"
             name = "Refined"
-            aspect_type = "refiner"
+            type = "refiner"
             prompt = "Desc"
         "#;
         std::fs::write(&aspect_path, aspect_toml).unwrap();
@@ -123,9 +160,8 @@ mod tests {
         pipelines.insert(
             "test".to_string(),
             Pipeline {
-                aspects: vec![AspectStep::Reference {
-                    file: aspect_path,
-                }],
+                aspects: vec![AspectStep::Reference { file: aspect_path }],
+                ..Default::default()
             },
         );
 
@@ -135,9 +171,11 @@ mod tests {
         };
         let ctx = crate::actions::AppContext;
 
-        let resolved = config.resolve_pipeline(&ctx, "test").unwrap();
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].id, "ref-1");
+        let resolved = config
+            .resolve_pipeline(&ctx, "test")
+            .expect("pipeline should resolve");
+        assert_eq!(resolved.aspects.len(), 1);
+        assert_eq!(resolved.aspects[0].id, "ref-1");
     }
 
     #[test]
@@ -150,7 +188,6 @@ mod tests {
 
     #[test]
     fn test_resolve_pipeline_with_model_overrides() {
-
         let mut pipelines = HashMap::new();
         pipelines.insert(
             "test".to_string(),
@@ -162,6 +199,7 @@ mod tests {
                     prompt: "D1".to_string(),
                     model: Some("custom-model".to_string()),
                 })],
+                ..Default::default()
             },
         );
 
@@ -171,7 +209,30 @@ mod tests {
         };
         let ctx = crate::actions::AppContext;
 
-        let resolved = config.resolve_pipeline(&ctx, "test").unwrap();
-        assert_eq!(resolved[0].model, Some("custom-model".to_string()));
+        let resolved = config
+            .resolve_pipeline(&ctx, "test")
+            .expect("pipeline should resolve");
+        assert_eq!(resolved.aspects[0].model, Some("custom-model".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_pipeline_rejects_zero_turn_limit() {
+        let mut pipelines = HashMap::new();
+        pipelines.insert(
+            "test".to_string(),
+            Pipeline {
+                max_turns: 0,
+                aspects: Vec::new(),
+            },
+        );
+
+        let config = Config {
+            pipelines,
+            ..Default::default()
+        };
+        let ctx = crate::actions::AppContext;
+
+        let result = config.resolve_pipeline(&ctx, "test");
+        assert!(result.is_err());
     }
 }

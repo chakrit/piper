@@ -1,16 +1,30 @@
 use crate::models::Aspect;
 use anyhow::Result;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 
 pub struct SessionContext {
     pub fork_results: HashMap<String, String>,
+    pub fork_corpora: HashMap<String, HashMap<String, String>>,
+    turns_taken: usize,
 }
 
 impl SessionContext {
     pub fn new() -> Self {
         Self {
             fork_results: HashMap::new(),
+            fork_corpora: HashMap::new(),
+            turns_taken: 0,
         }
+    }
+
+    pub fn consume_turn(&mut self, max_turns: NonZeroUsize) -> Result<()> {
+        if self.turns_taken >= max_turns.get() {
+            anyhow::bail!("Pipeline exceeded its max_turns limit of {}", max_turns);
+        }
+
+        self.turns_taken += 1;
+        Ok(())
     }
 }
 
@@ -22,10 +36,16 @@ pub struct PipelineState {
     pub current_index: usize,
     pub aspects: Vec<Aspect>,
     pub corpus: HashMap<String, String>,
+    pub max_turns: NonZeroUsize,
 }
 
 impl PipelineState {
-    pub fn new(working_draft: String, original_goal: String, aspects: Vec<Aspect>) -> Self {
+    pub fn new(
+        working_draft: String,
+        original_goal: String,
+        aspects: Vec<Aspect>,
+        max_turns: NonZeroUsize,
+    ) -> Self {
         Self {
             fork_id: None,
             fork_prompt: None,
@@ -34,7 +54,15 @@ impl PipelineState {
             current_index: 0,
             aspects,
             corpus: HashMap::new(),
+            max_turns,
         }
+    }
+
+    pub fn corpus_key(&self, key: &str) -> String {
+        self.fork_id
+            .as_ref()
+            .map(|fork_id| format!("{fork_id}/{key}"))
+            .unwrap_or_else(|| key.to_string())
     }
 
     pub fn current_aspect(&self) -> &Aspect {

@@ -4,16 +4,16 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 
+mod actions;
+mod config;
 mod driver;
 mod llm;
 mod models;
 mod state;
-mod config;
-mod actions;
 
+use actions::{AppContext, WriteConfig};
 use driver::Driver;
 use state::PipelineState;
-use actions::{AppContext, WriteConfig};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -43,7 +43,7 @@ enum Commands {
         draft: String,
 
         /// Directory containing prompt templates
-        #[arg(short, long, default_value = "skills/piped_piper/prompts")]
+        #[arg(short, long, default_value = "skills/piper/prompts")]
         prompts: PathBuf,
     },
 }
@@ -68,6 +68,7 @@ fn main() -> Result<()> {
                         prompt: "A basic refiner to get started".to_string(),
                         model: None,
                     })],
+                    ..Default::default()
                 },
             );
             config.pipelines = pipelines;
@@ -87,25 +88,25 @@ fn main() -> Result<()> {
             prompts,
         } => {
             let config = config::Config::load(&ctx, cli.config_file)?;
-            let aspects = config.resolve_pipeline(&ctx, &pipeline_name)?;
+            let pipeline = config.resolve_pipeline(&ctx, &pipeline_name)?;
 
-                let state = PipelineState::new(draft, goal, aspects);
-                let mut ctx = state::SessionContext::new();
+            let state = PipelineState::new(draft, goal, pipeline.aspects, pipeline.max_turns);
+            let mut ctx = state::SessionContext::new();
 
-                let client = llm::ConfigurableLlmClient {
-                    invocation: config.llm.invocation,
-                    system_prompt: config.llm.system_prompt,
-                    default_model: config.llm.default_model,
-                };
+            let client = llm::ConfigurableLlmClient {
+                invocation: config.llm.invocation,
+                system_prompt: config.llm.system_prompt,
+                default_model: config.llm.default_model,
+            };
 
-                let driver = Driver::new(client, prompts);
-                let results = driver.run(&mut ctx, state)?;
+            let driver = Driver::new(client, prompts);
+            let results = driver.run(&mut ctx, state)?;
 
-                println!("\n--- FINAL OUTPUTS ---");
-                for (i, res) in results.iter().enumerate() {
-                    println!("\n--- Output {} ---\n", i + 1);
-                    println!("{}", res);
-                }
+            println!("\n--- FINAL OUTPUTS ---");
+            for (i, res) in results.iter().enumerate() {
+                println!("\n--- Output {} ---\n", i + 1);
+                println!("{}", res);
+            }
         }
     }
 
