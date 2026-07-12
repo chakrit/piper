@@ -6,6 +6,8 @@
 **Current Aspect**: {{aspect_name}}
 **Aspect ID**: {{aspect_id}}
 **Aspect Prompt**: {{aspect_prompt}}
+**Original Goal**: {{goal}}
+**Fork Directive**: {{fork_prompt}}
 **Working Draft**: {{current_draft}}
 
 **Cumulative Knowledge Corpus (Prior Decisions)**:

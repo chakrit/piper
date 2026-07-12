@@ -13,11 +13,6 @@ sequentially via a state-machine driver to eliminate instruction drift.
 - **Driver**: `cargo run` (or the compiled `piper` binary)
 - **Build/Run**: Rust (Cargo)
 
-## ACE Configuration
-Managed by [ACE](https://github.com/ace-rs/ace).
-- `ace` to start/resume sessions.
-- Skills are symlinked from PRODIGY9 Coding School.
-
 ## Durable artifacts
 
 `docs/` — file by the routing gate in `docs/README.md`: a ruling → `decisions/`;

@@ -23,8 +23,12 @@ Piper is a context engineering engine that implements Aspect-Oriented Prompting.
 - Cargo
 
 ### Build & Run
+
+Build the tool and run the checked-in smoke pipeline:
+
 ```bash
-cargo run -- run rigour --goal "Make the draft accurate" --draft "Initial draft"
+cargo run -- --file pipelines/smoke.toml run smoke \
+  --goal "Verify the Piper driver" --draft "Unverified"
 ```
 
 `piper.toml` defines named pipelines. Each pipeline has an ordered `aspects` list and an
@@ -32,13 +36,6 @@ optional `max_turns` limit (default: 100) shared by the root run and every fork.
 [`docs/spec/aop-engine.md`](docs/spec/aop-engine.md) for the configuration and action
 protocol. The tracked [`self-evolve` pipeline](pipelines/self-evolve.toml)
 distills `ultra-engineer.md` into a bounded, fork-aware self-improvement loop.
-
-For a minimal real-Lens check, run:
-
-```bash
-cargo run -- --file pipelines/smoke.toml run smoke \
-  --goal "Verify the Piper driver" --draft "Unverified"
-```
 
 ## License
 MIT

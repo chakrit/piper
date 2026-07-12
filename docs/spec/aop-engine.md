@@ -26,9 +26,10 @@ calls the configured LLM, parses its response, then applies every returned actio
 If no action jumps or terminates, the driver advances to the next Aspect. A `gate` instead
 pauses for a human to continue, edit the draft, or abort.
 
-Every Worker Lens call consumes one turn. The shared `max_turns` limit prevents unbounded
-jump and fork loops; reaching it fails the run before another LLM call. Gates do not
-consume turns.
+Every refiner pass consumes one turn. Its one permitted recovery call, when needed, is part
+of that pass and does not consume an additional turn. The shared `max_turns` limit prevents
+unbounded jump and fork loops; reaching it fails the run before another refiner pass. Gates
+do not consume turns.
 
 If the first response cannot be parsed as the action JSON object, the driver makes one
 recovery call using `aspect-recover.md`. A recovery response that is still invalid fails
@@ -45,6 +46,9 @@ invocation = "opencode run -m {{model}} {{prompt}}"
 system_prompt = "You are a precise AOP worker."
 default_model = "cerebras/gemma-4-31b"
 
+[pipelines.rigour]
+max_turns = 50
+
 [[pipelines.rigour.aspects]]
 id = "spec-align"
 name = "Spec Alignment"
@@ -57,9 +61,6 @@ id = "review"
 name = "Human Review"
 type = "gate"
 prompt = ""
-
-[pipelines.rigour]
-max_turns = 50
 ```
 
 An aspect entry may instead reference a TOML file:
@@ -124,7 +125,6 @@ the same shared turn limit.
 | --- | --- | --- |
 | `aspect-refiner.md` | Worker Lens request | `aspect_name`, `aspect_id`, `aspect_prompt`, `current_draft`, `goal`, `fork_prompt`, `corpus` |
 | `aspect-recover.md` | One-shot formatter recovery | The rejected raw response is appended by the driver. |
-| `aspect-definition.md` | Human/LLM aid for designing a pipeline | No driver substitution. |
 
 `final-alignment.md` is intentionally absent. Final alignment is an ordinary, explicit
 Aspect when a pipeline requires it.
