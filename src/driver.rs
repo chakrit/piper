@@ -1,5 +1,5 @@
 use crate::llm::LlmClient;
-use crate::models::{AspectAction, AspectType, LlmResponse};
+use crate::models::{AspectAction, AspectType};
 use crate::state::{PipelineState, SessionContext};
 use anyhow::{Context, Result};
 use dialoguer::{Input, Select};
@@ -19,21 +19,6 @@ impl<C: LlmClient> Driver<C> {
     fn load_prompt(&self, filename: &str) -> Result<String> {
         fs::read_to_string(self.prompt_dir.join(filename))
             .with_context(|| format!("Failed to read prompt template {}", filename))
-    }
-
-    fn parse_response(&self, text: &str) -> Result<LlmResponse> {
-        let json_str = if let Some(start) = text.find("```json") {
-            let content = &text[start + 7..];
-            if let Some(end) = content.find("```") {
-                content[..end].trim()
-            } else {
-                content.trim()
-            }
-        } else {
-            text.trim()
-        };
-
-        serde_json::from_str(json_str).context("Failed to parse LLM response as JSON")
     }
 
     fn handle_gate(&self, state: &mut PipelineState) -> Result<bool> {
@@ -65,7 +50,6 @@ impl<C: LlmClient> Driver<C> {
 
     pub fn run(&self, ctx: &mut SessionContext, mut state: PipelineState) -> Result<Vec<String>> {
         let mut all_results = Vec::new();
-        let mut terminated = false;
 
         while state.current_index < state.aspects.len() {
             let aspect = state.current_aspect().clone();
@@ -115,97 +99,102 @@ impl<C: LlmClient> Driver<C> {
 
                     let raw_response = self.client.call(&prompt, aspect.model.as_deref())?;
 
-                    let response = match self.parse_response(&raw_response) {
-                        Ok(res) => res,
+                    let action = match AspectAction::parse(&raw_response) {
+                        Ok(action) => action,
                         Err(_) => {
-                            println!("[Driver] Parsing failed. Attempting recovery...");
+                            println!("[Driver] DSL parsing failed. Attempting recovery...");
                             let recover_template = self.load_prompt("aspect-recover.md")?;
 
                             let recover_prompt =
                                 format!("{}\n\nBad Response:\n{}", recover_template, raw_response);
                             let recovered_raw =
                                 self.client.call(&recover_prompt, aspect.model.as_deref())?;
-                            self.parse_response(&recovered_raw)?
+                            AspectAction::parse(&recovered_raw)?
                         }
                     };
 
-                    println!("[Driver] Violations found: {}", response.violations_found);
-
-                    let mut jumped = false;
-
-                    for action in response.actions {
-                        match action {
-                            AspectAction::Refine { draft } => {
-                                state.working_draft = draft;
-                            }
-                            AspectAction::AddKnowledge { key, value } => {
-                                state.corpus.insert(state.corpus_key(&key), value);
-                            }
-                            AspectAction::EditKnowledge { key, value } => {
-                                state.corpus.insert(state.corpus_key(&key), value);
-                            }
-                            AspectAction::Fork {
-                                id,
-                                prompt,
-                                goal,
-                                draft,
-                                start_aspect_id,
-                            } => {
-                                let mut fork_state = PipelineState {
-                                    fork_id: Some(id.clone()),
-                                    fork_prompt: Some(prompt),
-                                    working_draft: draft,
-                                    original_goal: goal,
-                                    current_index: 0,
-                                    aspects: state.aspects.clone(),
-                                    corpus: state.corpus.clone(),
-                                    max_turns: state.max_turns,
-                                };
-                                if let Some(sid) = start_aspect_id {
-                                    fork_state.jump_to_id(&sid)?;
-                                }
-
-                                let fork_results = self.run(ctx, fork_state)?;
-                                if let Some(last_res) = fork_results.last().cloned() {
-                                    ctx.fork_results.insert(id, last_res);
-                                }
-                                all_results.extend(fork_results);
-                            }
-                            AspectAction::Jump { id } => {
-                                state.jump_to_id(&id)?;
-                                jumped = true;
-                            }
-                            AspectAction::Merge { fork_ids } => {
-                                for fid in fork_ids {
-                                    if let Some(res) = ctx.fork_results.get(&fid) {
-                                        state.working_draft.push_str("\n\n--- Merged from fork ");
-                                        state.working_draft.push_str(&fid);
-                                        state.working_draft.push_str(" ---\n");
-                                        state.working_draft.push_str(res);
-                                    }
-                                    if let Some(corpus) = ctx.fork_corpora.get(&fid) {
-                                        state.corpus.extend(corpus.clone());
-                                    }
-                                }
-                            }
-                            AspectAction::Terminate => {
-                                terminated = true;
-                            }
+                    match action {
+                        AspectAction::Refine(draft) => {
+                            state.working_draft = draft;
+                            state.current_index += 1;
                         }
-                    }
-
-                    if terminated {
-                        println!("[Driver] LLM signaled termination.");
-                        all_results.push(state.working_draft);
-                        if let Some(fork_id) = &state.fork_id {
-                            ctx.fork_corpora
-                                .insert(fork_id.clone(), state.corpus.clone());
+                        AspectAction::AddKnowledge { key, value } => {
+                            let key = state.corpus_key(&key);
+                            if state.corpus.contains_key(&key) {
+                                anyhow::bail!(
+                                    "knowledge key '{}' already exists; use UPDATE-KNOWLEDGE",
+                                    key
+                                );
+                            }
+                            state.corpus.insert(key, value);
                         }
-                        return Ok(all_results);
-                    }
-
-                    if !jumped {
-                        state.current_index += 1;
+                        AspectAction::UpdateKnowledge { key, value } => {
+                            let key = state.corpus_key(&key);
+                            if !state.corpus.contains_key(&key) {
+                                anyhow::bail!(
+                                    "knowledge key '{}' does not exist; use ADD-KNOWLEDGE",
+                                    key
+                                );
+                            }
+                            state.corpus.insert(key, value);
+                        }
+                        AspectAction::Fork { id, prompt } => {
+                            if ctx.fork_results.contains_key(&id)
+                                || ctx.fork_corpora.contains_key(&id)
+                            {
+                                anyhow::bail!("fork ID '{}' already exists", id);
+                            }
+                            let next_index = state.current_index + 1;
+                            if next_index >= state.aspects.len() {
+                                anyhow::bail!(
+                                    "cannot fork from the final Aspect '{}'; no child start Aspect exists",
+                                    aspect.id
+                                );
+                            }
+                            let fork_state = PipelineState {
+                                fork_id: Some(id.clone()),
+                                fork_prompt: Some(prompt),
+                                working_draft: state.working_draft.clone(),
+                                original_goal: state.original_goal.clone(),
+                                current_index: next_index,
+                                aspects: state.aspects.clone(),
+                                corpus: state.corpus.clone(),
+                                max_turns: state.max_turns,
+                            };
+                            let fork_results = self.run(ctx, fork_state)?;
+                            let Some(last_result) = fork_results.last().cloned() else {
+                                anyhow::bail!("fork '{}' completed without an output", id);
+                            };
+                            ctx.fork_results.insert(id, last_result);
+                            all_results.extend(fork_results);
+                        }
+                        AspectAction::Jump(id) => state.jump_to_id(&id)?,
+                        AspectAction::Merge(fork_ids) => {
+                            for fork_id in fork_ids {
+                                let result = ctx.fork_results.get(&fork_id).with_context(|| {
+                                    format!("fork '{}' has no completed result", fork_id)
+                                })?;
+                                let corpus = ctx.fork_corpora.get(&fork_id).with_context(|| {
+                                    format!("fork '{}' has no completed corpus", fork_id)
+                                })?;
+                                state.working_draft.push_str("\n\n--- Merged from fork ");
+                                state.working_draft.push_str(&fork_id);
+                                state.working_draft.push_str(" ---\n");
+                                state.working_draft.push_str(result);
+                                state.corpus.extend(corpus.clone());
+                            }
+                            state.current_index += 1;
+                        }
+                        AspectAction::Done(draft) => {
+                            println!("[Driver] LLM signaled completion.");
+                            state.working_draft = draft;
+                            all_results.push(state.working_draft);
+                            if let Some(fork_id) = &state.fork_id {
+                                ctx.fork_corpora
+                                    .insert(fork_id.clone(), state.corpus.clone());
+                            }
+                            return Ok(all_results);
+                        }
                     }
                 }
             }
@@ -223,7 +212,7 @@ impl<C: LlmClient> Driver<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::*;
+    use crate::models::{Aspect, AspectType};
     use std::sync::Mutex;
 
     struct MockLlmClient {
@@ -240,49 +229,48 @@ mod tests {
         }
     }
 
+    struct RecordingMockLlmClient {
+        responses: Mutex<Vec<String>>,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl LlmClient for RecordingMockLlmClient {
+        fn call(&self, prompt: &str, _model: Option<&str>) -> Result<String> {
+            self.prompts
+                .lock()
+                .expect("prompts lock should not be poisoned")
+                .push(prompt.to_string());
+            let mut responses = self
+                .responses
+                .lock()
+                .expect("responses lock should not be poisoned");
+            if responses.is_empty() {
+                anyhow::bail!("No mock responses left");
+            }
+            Ok(responses.remove(0))
+        }
+    }
+
     #[test]
     fn test_run_with_dsl() {
         let temp_dir = std::env::temp_dir().join("piper_tests_dsl");
         std::fs::create_dir_all(&temp_dir).unwrap();
         std::fs::write(temp_dir.join("aspect-refiner.md"), "Mock template").unwrap();
 
-        let parent_resp = serde_json::to_string(&LlmResponse {
-            actions: vec![
-                AspectAction::Refine {
-                    draft: "Parent Updated".to_string(),
-                },
-                AspectAction::Fork {
-                    id: "f1".to_string(),
-                    prompt: "p1".to_string(),
-                    goal: "g1".to_string(),
-                    draft: "Draft 1".to_string(),
-                    start_aspect_id: None,
-                },
-                AspectAction::Merge {
-                    fork_ids: vec!["f1".to_string()],
-                },
-            ],
-            violations_found: 0,
-        })
-        .unwrap();
-
-        let fork_resp = serde_json::to_string(&LlmResponse {
-            actions: vec![
-                AspectAction::Refine {
-                    draft: "Fork 1 Final".to_string(),
-                },
-                AspectAction::AddKnowledge {
-                    key: "tdd-red".to_string(),
-                    value: "The behavior needs a failing test.".to_string(),
-                },
-                AspectAction::Terminate,
-            ],
-            violations_found: 0,
-        })
-        .unwrap();
+        let parent_fork = "FORK f1 Analyze the alternative".to_string();
+        let fork_knowledge = "ADD-KNOWLEDGE tdd-red The behavior needs a failing test.".to_string();
+        let fork_refinement = "REFINE Fork 1 Final".to_string();
+        let parent_merge = "MERGE f1".to_string();
+        let parent_refinement = "REFINE Parent Final".to_string();
 
         let client = MockLlmClient {
-            responses: Mutex::new(vec![parent_resp, fork_resp]),
+            responses: Mutex::new(vec![
+                parent_fork,
+                fork_knowledge,
+                fork_refinement,
+                parent_merge,
+                parent_refinement,
+            ]),
         };
 
         let driver = Driver::new(client, temp_dir);
@@ -293,13 +281,22 @@ mod tests {
             working_draft: "Initial".to_string(),
             original_goal: "Goal".to_string(),
             current_index: 0,
-            aspects: vec![Aspect {
-                id: "a1".to_string(),
-                name: "Aspect 1".to_string(),
-                aspect_type: AspectType::Refiner,
-                prompt: "Prompt".to_string(),
-                model: None,
-            }],
+            aspects: vec![
+                Aspect {
+                    id: "a1".to_string(),
+                    name: "Distill".to_string(),
+                    aspect_type: AspectType::Refiner,
+                    prompt: "Prompt".to_string(),
+                    model: None,
+                },
+                Aspect {
+                    id: "a2".to_string(),
+                    name: "Implement".to_string(),
+                    aspect_type: AspectType::Refiner,
+                    prompt: "Prompt".to_string(),
+                    model: None,
+                },
+            ],
             corpus: std::collections::HashMap::new(),
             max_turns: std::num::NonZeroUsize::new(10).expect("turn limit is non-zero"),
         };
@@ -324,13 +321,7 @@ mod tests {
         std::fs::write(temp_dir.join("aspect-refiner.md"), "Mock template")
             .expect("test prompt should be written");
 
-        let jump_response = serde_json::to_string(&LlmResponse {
-            actions: vec![AspectAction::Jump {
-                id: "a1".to_string(),
-            }],
-            violations_found: 0,
-        })
-        .expect("response should serialize");
+        let jump_response = "JUMP a1".to_string();
 
         let client = MockLlmClient {
             responses: Mutex::new(vec![jump_response.clone(), jump_response]),
@@ -365,19 +356,10 @@ mod tests {
         std::fs::write(temp_dir.join("aspect-recover.md"), "Recovery template")
             .expect("recovery template should be written");
 
-        let recovered_response = serde_json::to_string(&LlmResponse {
-            actions: vec![
-                AspectAction::Refine {
-                    draft: "Recovered draft".to_string(),
-                },
-                AspectAction::Terminate,
-            ],
-            violations_found: 0,
-        })
-        .expect("response should serialize");
+        let recovered_response = "REFINE Recovered draft".to_string();
 
         let client = MockLlmClient {
-            responses: Mutex::new(vec!["not JSON".to_string(), recovered_response]),
+            responses: Mutex::new(vec!["not a DSL action".to_string(), recovered_response]),
         };
         let driver = Driver::new(client, temp_dir);
         let mut ctx = SessionContext::new();
@@ -398,5 +380,73 @@ mod tests {
             .run(&mut ctx, state)
             .expect("recovery should succeed");
         assert_eq!(results, vec!["Recovered draft"]);
+    }
+
+    #[test]
+    fn test_run_rejects_duplicate_knowledge() {
+        let temp_dir = std::env::temp_dir().join("piper_tests_knowledge");
+        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
+        std::fs::write(temp_dir.join("aspect-refiner.md"), "Mock template")
+            .expect("worker template should be written");
+
+        let client = MockLlmClient {
+            responses: Mutex::new(vec![
+                "ADD-KNOWLEDGE requirement Preserve compatibility".to_string(),
+                "ADD-KNOWLEDGE requirement Preserve compatibility".to_string(),
+            ]),
+        };
+        let driver = Driver::new(client, temp_dir);
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Initial".to_string(),
+            "Goal".to_string(),
+            vec![Aspect {
+                id: "a1".to_string(),
+                name: "Aspect 1".to_string(),
+                aspect_type: AspectType::Refiner,
+                prompt: "Prompt".to_string(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
+        );
+
+        let error = driver
+            .run(&mut ctx, state)
+            .expect_err("duplicate knowledge should fail");
+        assert!(error.to_string().contains("use UPDATE-KNOWLEDGE"));
+    }
+
+    #[test]
+    fn test_run_updates_knowledge_before_refining() {
+        let temp_dir = std::env::temp_dir().join("piper_tests_update_knowledge");
+        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
+        std::fs::write(temp_dir.join("aspect-refiner.md"), "Corpus: {{corpus}}")
+            .expect("worker template should be written");
+
+        let client = RecordingMockLlmClient {
+            responses: Mutex::new(vec![
+                "ADD-KNOWLEDGE requirement Preserve compatibility".to_string(),
+                "UPDATE-KNOWLEDGE requirement Preserve the stable API".to_string(),
+                "REFINE Final draft".to_string(),
+            ]),
+            prompts: Mutex::new(Vec::new()),
+        };
+        let driver = Driver::new(client, temp_dir);
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Initial".to_string(),
+            "Goal".to_string(),
+            vec![Aspect {
+                id: "a1".to_string(),
+                name: "Aspect 1".to_string(),
+                aspect_type: AspectType::Refiner,
+                prompt: "Prompt".to_string(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
+        );
+
+        let results = driver.run(&mut ctx, state).expect("run should succeed");
+        assert_eq!(results, vec!["Final draft"]);
     }
 }

@@ -8,7 +8,7 @@ Piper is a context engineering engine that implements Aspect-Oriented Prompting.
 ## Architecture
 - **Aspects**: Modular lens templates that define specific alignment or behavioral constraints.
 - **Pipelines**: Ordered sequences of Aspects that define the processing flow for a given task.
-- **Driver**: A Rust state machine that executes ordered actions from each Aspect, including refinement, knowledge capture, routing, forks, merges, gates, and termination.
+- **Driver**: A Rust state machine that executes one compact DSL command from each Aspect, including refinement, knowledge capture, routing, forks, merges, gates, and completion.
 
 ## Project Structure
 - `src/`: Rust source code for the driver.

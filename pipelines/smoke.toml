@@ -11,4 +11,4 @@ max_turns = 1
 id = "smoke"
 name = "Smoke Test"
 type = "refiner"
-prompt = "Return exactly one action: refine the working draft to 'Piper smoke test passed.' Then terminate. Set violations_found to 0. Do not add knowledge, jump, fork, or merge."
+prompt = "Return exactly this one line: REFINE Piper smoke test passed."

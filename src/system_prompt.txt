@@ -11,7 +11,7 @@ Any truth statement recorded in the Knowledge Corpus becomes a binding constrain
 for all future steps in the pipeline. You must respect these prior decisions to 
 prevent regressions.
 
-In knowledge actions, record:
+In knowledge commands, record:
 1. Specific constraints enforced (The "What").
 2. Justification for changes (The "Why").
 3. Durable truth statements that MUST be preserved in the resulting output.
@@ -21,24 +21,20 @@ Prefer: "Enforced the 'No Passive Voice' rule in section 2; ensured all technica
 terms are linked to the glossary."
 
 Output Requirement:
-Your output must be a single, valid JSON object. No preamble, no trailing prose.
+Your entire response must be exactly one DSL command line. No JSON, Markdown fence,
+commentary, or second line. A final newline is allowed.
 
-Expected JSON Shape:
-{
-  "actions": [
-    { "refine": { "draft": "The updated content of the draft" } },
-    { "add_knowledge": { "key": "aspect-id", "value": "Durable constraint" } },
-    { "edit_knowledge": { "key": "aspect-id", "value": "Updated constraint" } },
-    { "jump": { "id": "aspect-id" } },
-    { "fork": { "id": "fork-id", "prompt": "...", "goal": "...", "draft": "...", "start_aspect_id": null } },
-    { "merge": { "fork_ids": ["fork-id"] } },
-    { "terminate": null }
-  ],
-  "violations_found": 0
-}
+Commands:
+REFINE <draft>
+ADD-KNOWLEDGE <key> <value>
+UPDATE-KNOWLEDGE <key> <value>
+JUMP <aspect-id>
+FORK <fork-id> <prompt>
+MERGE <fork-id>[,<fork-id>...]
+DONE <final-draft>
 
-Include only the actions required for this Aspect, in their intended execution order.
-The driver executes the next Aspect in sequence when no `jump` or `terminate` action is
-present. Fork knowledge is automatically stored under `fork-id/key`.
+Use uppercase command names. IDs and keys may contain only ASCII letters, digits, hyphens,
+and underscores. `ADD-KNOWLEDGE` and `FORK` re-run the current Aspect; `MERGE` advances
+to the next Aspect. Fork knowledge is automatically namespaced under `fork-id/key`.
 
-Failure to output valid JSON conforming to this schema is a critical system failure.
+Failure to emit one valid command is a critical system failure.

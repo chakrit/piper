@@ -3,8 +3,9 @@
 - **Status:** implemented as [`pipelines/self-evolve.toml`](pipelines/self-evolve.toml)
 - **Scope:** A bounded, fork-aware workflow for planning and auditing Piper's own evolution.
 
-The TOML pipeline is the executable source of truth. This note explains the intent behind
-its ordered Aspects; it does not describe direct filesystem mutation by Piper.
+The TOML pipeline is the executable source of truth. Each Aspect emits one DSL command;
+this note explains the intent behind those commands and does not describe direct filesystem
+mutation by Piper.
 
 ## 1. Clarify
 
@@ -12,7 +13,7 @@ Given a requirement, analyze, think long and hard, and rewrite the user request 
 most clear instructions possible. Compare it against the specifications that exists in the
 repository. If there are any potential questions that cannot be automatically resolve by
 the project's standing convention or philosophy, terminate the pipeline with the question
-list so the user can give answers.
+list so the user can give answers. Emit `DONE <question-list>` for this outcome.
 
 ## 2. Distill
 
@@ -62,7 +63,7 @@ Write as little code as possible to make the failing test pass. Then move to TDD
 ## 8. TDD Refactor
 
 Look at recent implementations, find opportunities to refactor to improve levels of
-abstractions and reduce code duplication. Apply them. Then move to TDD-LOOP
+abstractions and reduce code duplication. Apply them. Then move to Completion Check.
 
 ## 9. Completion Check
 
@@ -73,4 +74,4 @@ test is covered. If anything is missing, return to TDD Red; otherwise proceed to
 
 Read all recent implementations and verify that both the code written, test written,
 and related specs files are all aligned. If not, flag the misalignment and go back to
-Architect step. Otherwise terminate.
+Architect step. Otherwise emit `DONE <completion-report>`.

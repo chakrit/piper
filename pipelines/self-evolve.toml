@@ -13,58 +13,58 @@ max_turns = 48
 id = "clarify"
 name = "Clarify the Change"
 type = "refiner"
-prompt = "Rewrite the requested change into an unambiguous objective, compare it with the available specifications, and capture acceptance criteria in the corpus. If a material choice cannot be resolved from the repository, replace the draft with only the questions for the user and terminate. Otherwise preserve the clarified objective as the working draft and continue."
+prompt = "Rewrite the requested change into an unambiguous objective and compare it with the specifications. Use ADD-KNOWLEDGE one criterion at a time, then rerun this Aspect. If a material choice cannot be resolved, return DONE followed by only the question list. Otherwise return REFINE followed by the clarified objective."
 
 [[pipelines.self-evolve.aspects]]
 id = "distill"
 name = "Distill Work Streams"
 type = "refiner"
-prompt = "Split the clarified objective into independent, coherent work streams. For one stream, refine the draft into that stream and jump to architect. For multiple streams, fork one pipeline per stream with a unique descriptive ID, that stream's goal and draft, and start_aspect_id architect. Then merge every fork and jump to audit so the root pipeline reviews the combined result."
+prompt = "Split the clarified objective into independent work streams. For each branch, return FORK with a unique ID and a concise branch directive; this Aspect will rerun after that child completes. Once every branch is complete, return MERGE with their comma-separated IDs. For one stream, return REFINE with that stream."
 
 [[pipelines.self-evolve.aspects]]
 id = "architect"
 name = "Architecture and Abstraction"
 type = "refiner"
-prompt = "Assess the current repository design and specifications for a simpler, more reliable abstraction or architecture that makes this work easier. Record the reasoning in the corpus. If structural change is needed, refine the draft into the required refactor and jump to restructure; otherwise jump to test-plan."
+prompt = "Assess the repository design and specifications for a simpler, more reliable abstraction. Record one durable finding at a time with ADD-KNOWLEDGE, then rerun. If structural change is needed, return REFINE with the required refactor; otherwise return JUMP test-plan."
 
 [[pipelines.self-evolve.aspects]]
 id = "restructure"
 name = "Restructure Before Feature Work"
 type = "refiner"
-prompt = "Describe the smallest safe refactor that makes the requested work straightforward, including affected boundaries and preserved behavior. Do not introduce unrelated abstractions. Update the draft with the refactor plan and jump to test-plan."
+prompt = "Describe the smallest safe refactor that makes the requested work straightforward, including affected boundaries and preserved behavior. Do not introduce unrelated abstractions. Return REFINE with the refactor plan."
 
 [[pipelines.self-evolve.aspects]]
 id = "test-plan"
 name = "Test Plan"
 type = "refiner"
-prompt = "Define the narrow failing test that proves the next missing behavior, key edge cases, and the broad verification command. For untestable documentation or configuration changes, state the concrete substitute verification. Refine the draft into this plan and jump to tdd-red."
+prompt = "Define the narrow failing test, key edge cases, and broad verification command. For untestable documentation or configuration changes, state the substitute verification. Return REFINE with this plan."
 
 [[pipelines.self-evolve.aspects]]
 id = "tdd-red"
 name = "TDD Red"
 type = "refiner"
-prompt = "Specify the smallest test slice that should fail for the expected missing behavior. Reject compile-only failures and tautological assertions. Refine the draft to include the red test and its expected failure, then jump to tdd-green."
+prompt = "Specify the smallest test slice that should fail for the missing behavior. Reject compile-only failures and tautological assertions. Return REFINE with the red test and expected failure."
 
 [[pipelines.self-evolve.aspects]]
 id = "tdd-green"
 name = "TDD Green"
 type = "refiner"
-prompt = "Produce the smallest implementation change that satisfies the red test and no more. Keep the draft focused on the implementation and evidence that the target test passes. Then jump to tdd-refactor."
+prompt = "Produce the smallest implementation change that satisfies the red test and no more. Keep the draft focused on implementation and evidence that the target test passes. Return REFINE with that result."
 
 [[pipelines.self-evolve.aspects]]
 id = "tdd-refactor"
 name = "TDD Refactor"
 type = "refiner"
-prompt = "Improve naming, boundaries, and duplication without changing behavior. Remove unneeded code rather than adding generality. Refine the draft with the clean final shape, then jump to completion-check."
+prompt = "Improve naming, boundaries, and duplication without changing behavior. Remove unneeded code rather than adding generality. Return REFINE with the clean final shape."
 
 [[pipelines.self-evolve.aspects]]
 id = "completion-check"
 name = "Completion Check"
 type = "refiner"
-prompt = "Decide whether every accepted requirement is fulfilled and every planned test is covered. If not, identify the next missing behavior in the draft and jump to tdd-red. If yes, jump to audit."
+prompt = "Decide whether every accepted requirement and planned test is covered. If anything is missing, return JUMP tdd-red. If complete, return JUMP audit."
 
 [[pipelines.self-evolve.aspects]]
 id = "audit"
 name = "Alignment Audit"
 type = "refiner"
-prompt = "Audit the final work against the clarified objective, accepted specs, test plan, and engineering constraints. Categorize findings as violation, borderline, or out of scope. If there is a violation, refine the draft with the corrective next step and jump to architect. Otherwise produce a concise completion report and terminate."
+prompt = "Audit the work against the clarified objective, accepted specs, test plan, and engineering constraints. Categorize findings as violation, borderline, or out of scope. For a violation, first ADD-KNOWLEDGE audit the corrective next step, then rerun and JUMP architect. Otherwise return DONE with a concise completion report."

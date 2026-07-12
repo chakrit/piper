@@ -21,30 +21,26 @@ Refine the Working Draft strictly through the lens of the current Aspect, while 
 - **Preserve**: Do NOT alter parts of the draft that are irrelevant to this Aspect.
 
 **Output Format**:
-You MUST respond in valid JSON. No preamble, no trailing prose.
+You MUST respond with exactly one DSL command line. No JSON, Markdown fence, preamble, or
+second line. A final newline is allowed.
 
-```json
-{
-  "actions": [
-    { "refine": { "draft": "The updated content" } },
-    { "add_knowledge": { "key": "id", "value": "truth" } },
-    { "edit_knowledge": { "key": "id", "value": "updated truth" } },
-    { "terminate": null },
-    { "jump": { "id": "aspect_id" } },
-    { "fork": { "id": "f1", "prompt": "...", "goal": "...", "draft": "...", "start_aspect_id": "..." } },
-    { "merge": { "fork_ids": ["f1"] } }
-  ],
-  "violations_found": 0
-}
+**Commands**:
+
+```text
+REFINE updated draft
+ADD-KNOWLEDGE key durable constraint
+UPDATE-KNOWLEDGE key corrected constraint
+JUMP aspect-id
+FORK fork-id branch directive
+MERGE fork-id,other-fork-id
+DONE final draft
 ```
 
-**Action Guide**:
-- `refine`: Use this to update the working draft.
-- `add_knowledge` / `edit_knowledge`: Use this to record a durable constraint for future Aspects. Use the current `{{aspect_id}}` as the key unless referencing another. The driver namespaces keys written in a fork as `fork-id/key`.
-- `terminate`: Signal that the goal is reached and no further refining is needed.
-- `jump`: Skip ahead or loop back to a specific Aspect ID.
-- `fork`: Spin off a secondary pipeline to explore a specific alternative or sub-goal.
-- `merge`: Append results from previously completed forks and merge their namespaced corpus entries into this pipeline.
+- `REFINE` replaces the working draft and advances.
+- `ADD-KNOWLEDGE` adds a new key; `UPDATE-KNOWLEDGE` requires an existing key. Both re-run this Aspect so a later command can use the updated corpus.
+- `JUMP` transfers control to the named Aspect.
+- `FORK` starts a child at the next Aspect with the current draft and goal, then re-runs this Aspect so it can create more branches or merge them.
+- `MERGE` incorporates completed fork outputs and corpus entries, then advances.
+- `DONE` replaces the working draft with its text argument and returns it immediately.
 
-🚨 **CRITICAL**: If the output is not valid JSON conforming to the system schema, the state-machine driver will fail.
-  Output ONLY the JSON object. Include only the actions needed for this pass; the entries above are alternatives, not a required checklist.
+IDs and keys use only ASCII letters, digits, hyphens, and underscores. Text arguments are the remainder of the line. Fork-owned knowledge is namespaced as `fork-id/key`.
