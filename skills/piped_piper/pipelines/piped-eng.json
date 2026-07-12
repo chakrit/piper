@@ -1,18 +1,122 @@
 [
   {
-    "name": "Spec-Alignment",
-    "description": "The Source of Truth. Ensure draft matches project specifications, RFCs, or ADRs. Prune feature creep."
+    "id": "scope-clarifier",
+    "name": "Scope Clarifier",
+    "type": "refiner",
+    "description": "Force explicit boundaries; identify 'out-of-scope'. Ensure the goal is narrow and achievable."
   },
   {
-    "name": "TDD-Compliance",
-    "description": "The Verification Loop. Enforce Red -> Green -> Refactor. Ensure every line of logic is justified by a passing test."
+    "id": "investigator",
+    "name": "Investigator",
+    "type": "refiner",
+    "description": "Find existing patterns, constraints, and dependencies. Research the current state to avoid duplicating work."
   },
   {
-    "name": "Implementation Rigor",
-    "description": "The Quality Standard. Apply 'elegant just-enough' philosophy. Enforce general-coding skill rules."
+    "id": "plan-enricher",
+    "name": "Plan Enricher",
+    "type": "refiner",
+    "description": "Expand the 'what' into a concrete 'how'. Detail the steps, data flow, and logic."
   },
   {
-    "name": "Compliance Audit",
-    "description": "The Zero-Violation Filter. Full file re-read. Ensure zero rule violations block landing."
+    "id": "user-gate-1",
+    "name": "User Approval Gate",
+    "type": "gate",
+    "description": "Stop for human review of the enriched plan."
+  },
+  {
+    "id": "architect",
+    "name": "Architect",
+    "type": "refiner",
+    "description": "Define components, interfaces, and data flow. Design the structural skeleton."
+  },
+  {
+    "id": "abstraction-lifter",
+    "name": "Abstraction Lifter",
+    "type": "refiner",
+    "description": "Move from concrete implementation to systemic patterns. Raise the level of the design."
+  },
+  {
+    "id": "complexity-calmer",
+    "name": "Complexity Calmer",
+    "type": "refiner",
+    "description": "Cut 'just-in-case' abstractions; return to KISS. Prune any over-engineering."
+  },
+  {
+    "id": "plan-verifier",
+    "name": "Plan Verifier",
+    "type": "refiner",
+    "description": "Cross-check the architecture against the initial scope and the enriched plan."
+  },
+  {
+    "id": "test-designer",
+    "name": "Test Designer",
+    "type": "refiner",
+    "description": "Define the 'Green' state. Write the test cases, inputs, and expected assertions."
+  },
+  {
+    "id": "test-critic",
+    "name": "Test Critic",
+    "type": "refiner",
+    "description": "Find gaps in the test design. Hunt for edge cases and failure modes."
+  },
+  {
+    "id": "alignment-judge",
+    "name": "Alignment Judge",
+    "type": "refiner",
+    "description": "Decision Point: If test gaps are found, rewind to 'plan-enricher'. Otherwise, proceed."
+  },
+  {
+    "id": "tdd-red",
+    "name": "TDD Red",
+    "type": "refiner",
+    "description": "Write the failing test code. Implement the test check first."
+  },
+  {
+    "id": "min-impl",
+    "name": "Minimum Implementation",
+    "type": "refiner",
+    "description": "Write the absolute minimum code needed to make the test pass."
+  },
+  {
+    "id": "tdd-green",
+    "name": "TDD Green",
+    "type": "refiner",
+    "description": "Refine the implementation until the test passes and the logic is sound."
+  },
+  {
+    "id": "tdd-refactor",
+    "name": "TDD Refactor",
+    "type": "refiner",
+    "description": "Clean the code without changing behavior. Apply General Coding laws."
+  },
+  {
+    "id": "tdd-loop-judge",
+    "name": "TDD Loop Judge",
+    "type": "refiner",
+    "description": "Decision Point: If more tests are required, rewind to 'tdd-red'. Otherwise, proceed."
+  },
+  {
+    "id": "plan-auditor",
+    "name": "Plan Auditor",
+    "type": "refiner",
+    "description": "Verify: 'Did we build what we planned in the enriched plan?'"
+  },
+  {
+    "id": "spec-auditor",
+    "name": "Spec Auditor",
+    "type": "refiner",
+    "description": "Verify: 'Does the result satisfy the original AOP engine specification?'"
+  },
+  {
+    "id": "coverage-auditor",
+    "name": "Coverage Auditor",
+    "type": "refiner",
+    "description": "Verify: 'Is every logical branch covered by the test suite?'"
+  },
+  {
+    "id": "final-synthesizer",
+    "name": "Final Synthesizer",
+    "type": "refiner",
+    "description": "Package the final result, polished and aligned."
   }
 ]

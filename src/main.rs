@@ -1,295 +1,231 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
+use dialoguer::{Input, Select};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
-use uuid::Uuid;
-use chrono::{DateTime, Utc};
+use std::path::PathBuf;
+use std::process::Command;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to the pipeline JSON file
+    #[arg(short, long)]
+    pipeline: PathBuf,
+
+    /// The original goal/objective
+    #[arg(short, long)]
+    goal: String,
+
+    /// The initial draft of the content
+    #[arg(short, long)]
+    draft: String,
+
+    /// Directory containing prompt templates
+    #[arg(short, long, default_value = "skills/piped_piper/prompts")]
+    prompts: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum AspectType {
+    Refiner,
+    Gate,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Aspect {
+    id: String,
     name: String,
+    #[serde(rename = "type")]
+    aspect_type: AspectType,
     description: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-enum RunStatus {
-    Idle,
-    AwaitingInput,
-    Completed,
+#[derive(Debug, Serialize, Deserialize)]
+struct LlmResponse {
+    refined_draft: String,
+    violations_found: u32,
+    next_aspect_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct RunState {
-    run_id: String,
-    pipeline_path: PathBuf,
-    goal: String,
-    current_draft: String,
-    current_aspect_index: usize,
-    status: RunStatus,
-    created_at: DateTime<Utc>,
+trait LlmClient {
+    fn call(&self, prompt: &str) -> Result<LlmResponse>;
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct HistoryEntry {
-    aspect_index: usize,
-    prompt: String,
-    response: String,
-    timestamp: DateTime<Utc>,
-}
+struct ClaudeCliClient;
 
-#[derive(Parser)]
-#[command(name = "piped-piper")]
-#[command(about = "Aspect-Oriented Prompting Engine", long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
+impl LlmClient for ClaudeCliClient {
+    fn call(&self, prompt: &str) -> Result<LlmResponse> {
+        let output = Command::new("claude")
+            .arg("-p")
+            .arg(prompt)
+            .output()
+            .context("Failed to execute claude CLI")?;
 
-#[derive(Subcommand)]
-enum Commands {
-    /// Initialize a new run
-    Start {
-        #[arg(short, long)]
-        pipeline: PathBuf,
-        #[arg(short, long)]
-        goal: String,
-        #[arg(short, long)]
-        draft: String,
-    },
-    /// Advance to the next aspect and get the prompt
-    Step {
-        run_id: String,
-    },
-    /// Apply the response to the current aspect
-    Apply {
-        run_id: String,
-        response: String,
-    },
-    /// Show current run status
-    Status {
-        run_id: String,
-    },
-    /// Run the engine interactively for humans
-    Interactive {
-        run_id: String,
-    },
-}
-
-struct Engine {
-    state_dir: PathBuf,
-}
-
-impl Engine {
-    fn new() -> Result<Self> {
-        let state_dir = PathBuf::from(".piped_piper/runs");
-        if !state_dir.exists() {
-            fs::create_dir_all(&state_dir)?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "Claude CLI exited with error: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
-        Ok(Self { state_dir })
-    }
 
-    fn get_run_path(&self, run_id: &str) -> PathBuf {
-        self.state_dir.join(run_id)
-    }
-
-    fn load_state(&self, run_id: &str) -> Result<RunState> {
-        let path = self.get_run_path(run_id).join("state.json");
-        let content = fs::read_to_string(path).context("Run state not found. Use 'start' first.")?;
-        Ok(serde_json::from_str(&content)?)
-    }
-
-    fn save_state(&self, state: &RunState) -> Result<()> {
-        let path = self.get_run_path(&state.run_id).join("state.json");
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let content = serde_json::to_string_pretty(state)?;
-        fs::write(path, content)?;
-        Ok(())
-    }
-
-    fn load_history(&self, run_id: &str) -> Result<Vec<HistoryEntry>> {
-        let path = self.get_run_path(run_id).join("history.json");
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        let content = fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&content)?)
-    }
-
-    fn save_history(&self, run_id: &str, history: &[HistoryEntry]) -> Result<()> {
-        let path = self.get_run_path(run_id).join("history.json");
-        let content = serde_json::to_string_pretty(history)?;
-        fs::write(path, content)?;
-        Ok(())
-    }
-
-    fn start(&self, pipeline_path: PathBuf, goal: String, draft: String) -> Result<String> {
-        let run_id = Uuid::new_v4().to_string();
-        let state = RunState {
-            run_id: run_id.clone(),
-            pipeline_path,
-            goal,
-            current_draft: draft,
-            current_aspect_index: 0,
-            status: RunStatus::Idle,
-            created_at: Utc::now(),
-        };
-        self.save_state(&state)?;
-        Ok(run_id)
-    }
-
-    fn step(&self, run_id: &str) -> Result<String> {
-        let mut state = self.load_state(run_id)?;
+        let response_text = String::from_utf8_lossy(&output.stdout);
         
-        if let RunStatus::AwaitingInput = state.status {
-            return Err(anyhow::anyhow!("Run is already awaiting input. Use 'apply' to proceed."));
-        }
-
-        let pipeline: Vec<Aspect> = {
-            let content = fs::read_to_string(&state.pipeline_path)
-                .context("Could not read pipeline file")?;
-            serde_json::from_str(&content)?
-        };
-
-        if state.current_aspect_index >= pipeline.len() {
-            // Final Synthesis
-            state.status = RunStatus::Completed;
-            self.save_state(&state)?;
-            
-            let synthesis_template = fs::read_to_string("skills/piped_piper/prompts/final-alignment.md")
-                .context("Could not find final-alignment.md template")?;
-            
-            let aspect_names: Vec<String> = pipeline.iter().map(|a| a.name.clone()).collect();
-            
-            Ok(synthesis_template
-                .replace("{{original_goal}}", &state.goal)
-                .replace("{{final_draft}}", &state.current_draft)
-                .replace("{{aspect_list}}", &aspect_names.join(", ")))
-        } else {
-            let aspect = &pipeline[state.current_aspect_index];
-            let refiner_template = fs::read_to_string("skills/piped_piper/prompts/aspect-refiner.md")
-                .context("Could not find aspect-refiner.md template")?;
-            
-            let prompt = refiner_template
-                .replace("{{aspect_name}}", &aspect.name)
-                .replace("{{aspect_description}}", &aspect.description)
-                .replace("{{current_draft}}", &state.current_draft);
-            
-            state.status = RunStatus::AwaitingInput;
-            self.save_state(&state)?;
-            
-            Ok(prompt)
-        }
-    }
-
-    fn apply(&self, run_id: &str, response: String) -> Result<String> {
-        let mut state = self.load_state(run_id)?;
-        
-        if let RunStatus::AwaitingInput = state.status {
-            // In a real-world scenario, we'd parse JSON from the response.
-            // For now, as per the user's "dumb" requirement, we basically 
-            // trust the driver to provide the refined draft or we do basic extraction.
-            
-            // Mimic the Python driver's basic JSON extraction
-            let refined_draft = if response.contains("```json") {
-                response.split("```json").nth(1).unwrap_or(&response)
-                       .split("```").next().unwrap_or(&response).trim().to_string()
+        // Extract JSON from potentially wrapped markdown blocks
+        let json_str = if let Some(start) = response_text.find("```json") {
+            let content = &response_text[start + 7..];
+            if let Some(end) = content.find("```") {
+                content[..end].trim()
             } else {
-                response.trim().to_string()
-            };
-
-            // Try to parse as JSON to get 'refined_draft' field specifically
-            let final_draft = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&refined_draft) {
-                json["refined_draft"].as_str().unwrap_or(&refined_draft).to_string()
-            } else {
-                refined_draft
-            };
-
-            let mut history = self.load_history(run_id)?;
-            
-            // Get the prompt that was sent (we'd need to store it in state or re-generate it)
-            // For simplicity, let's store the last prompt in metadata or just record the index.
-            history.push(HistoryEntry {
-                aspect_index: state.current_aspect_index,
-                prompt: "".to_string(), // Simplification: in a real impl, store this in RunState
-                response: response.clone(),
-                timestamp: Utc::now(),
-            });
-            self.save_history(run_id, &history)?;
-
-            state.current_draft = final_draft;
-            state.current_aspect_index += 1;
-            state.status = RunStatus::Idle;
-            self.save_state(&state)?;
-
-            Ok(format!("Applied response. Next aspect index: {}", state.current_aspect_index))
+                content.trim()
+            }
         } else {
-            Err(anyhow::anyhow!("Run is not awaiting input."))
+            response_text.trim()
+        };
+
+        serde_json::from_str(json_str).context("Failed to parse LLM response as JSON")
+    }
+}
+
+struct PipelineState {
+    working_draft: String,
+    original_goal: String,
+    current_index: usize,
+    aspects: Vec<Aspect>,
+}
+
+impl PipelineState {
+    fn current_aspect(&self) -> &Aspect {
+        &self.aspects[self.current_index]
+    }
+
+    fn jump_to_id(&mut self, id: &str) -> Result<()> {
+        if let Some(pos) = self.aspects.iter().position(|a| a.id == id) {
+            self.current_index = pos;
+            Ok(())
+        } else {
+            anyhow::bail!("Aspect ID {} not found in pipeline", id)
+        }
+    }
+}
+
+struct Driver<C: LlmClient> {
+    client: C,
+    prompt_dir: PathBuf,
+}
+
+impl<C: LlmClient> Driver<C> {
+    fn new(client: C, prompt_dir: PathBuf) -> Self {
+        Self { client, prompt_dir }
+    }
+
+    fn load_prompt(&self, filename: &str) -> Result<String> {
+        fs::read_to_string(self.prompt_dir.join(filename))
+            .with_context(|| format!("Failed to read prompt template {}", filename))
+    }
+
+    fn handle_gate(&self, state: &mut PipelineState) -> Result<bool> {
+        println!("\n--- 🛑 STOP-GATE: {} ---", state.current_aspect().name);
+        println!("\nCURRENT DRAFT:\n\n{}\n", state.working_draft);
+        println!("--------------------------------------------------");
+
+        let options = vec!["Continue", "Edit Draft", "Abort"];
+        let selection = Select::new()
+            .with_prompt("Choose an action")
+            .items(&options)
+            .interact()?;
+
+        match selection {
+            0 => Ok(true),
+            1 => {
+                let new_draft: String = Input::new()
+                    .with_prompt("Enter the edited draft (or leave empty to keep current)")
+                    .allow_empty(true)
+                    .interact_text()?;
+                if !new_draft.is_empty() {
+                    state.working_draft = new_draft;
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 
-    fn status(&self, run_id: &str) -> Result<String> {
-        let state = self.load_state(run_id)?;
-        let pipeline: Vec<Aspect> = {
-            let content = fs::read_to_string(&state.pipeline_path)?;
-            serde_json::from_str(&content)?
-        };
+    fn run(&self, mut state: PipelineState) -> Result<String> {
+        while state.current_index < state.aspects.len() {
+            let aspect = state.current_aspect().clone();
+            println!("\n>>> Processing: {} ({})", aspect.name, aspect.id);
+
+            match aspect.aspect_type {
+                AspectType::Gate => {
+                    if !self.handle_gate(&mut state)? {
+                        anyhow::bail!("Run aborted by user at gate {}", aspect.id);
+                    }
+                    state.current_index += 1;
+                }
+                AspectType::Refiner => {
+                    let template = self.load_prompt("aspect-refiner.md")?;
+                    let prompt = template
+                        .replace("{{aspect_name}}", &aspect.name)
+                        .replace("{{aspect_description}}", &aspect.description)
+                        .replace("{{current_draft}}", &state.working_draft);
+
+                    let response = self.client.call(&prompt)?;
+                    state.working_draft = response.refined_draft;
+                    
+                    println!("[Driver] Violations found: {}", response.violations_found);
+
+                    if let Some(next_id) = response.next_aspect_id {
+                        println!("[Driver] LLM signaled jump to: {}", next_id);
+                        state.jump_to_id(&next_id)?;
+                    } else {
+                        state.current_index += 1;
+                    }
+                }
+            }
+        }
+
+        // Final synthesis (similar to the original driver)
+        println!("\n>>> Performing Final Synthesis...");
+        let synth_template = self.load_prompt("final-alignment.md")?;
+        let aspect_list: Vec<String> = state.aspects.iter().map(|a| a.name.clone()).collect();
+        let final_prompt = synth_template
+            .replace("{{original_goal}}", &state.original_goal)
+            .replace("{{final_draft}}", &state.working_draft)
+            .replace("{{aspect_list}}", &aspect_list.join(", "));
+
+        // For the final synthesis, we manually trigger the LLM and return the result as a string
+        // since the Synthesis pass doesn't return a JSON LlmResponse but a final result.
+        // I'll add a special method to the trait or just handle it.
         
-        Ok(format!(
-            "Run ID: {}\nGoal: {}\nProgress: {}/{} aspects\nStatus: {:?}\nDraft Length: {} chars",
-            state.run_id, state.goal, state.current_aspect_index, pipeline.len(), state.status, state.current_draft.len()
-        ))
+        // For now, let's just call the client and use the refined_draft part of the response
+        // assuming the final-alignment template is also structured to return a JSON object.
+        let final_resp = self.client.call(&final_prompt)?;
+        Ok(final_resp.refined_draft)
     }
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let engine = Engine::new()?;
+    let args = Args::parse();
+    
+    let pipeline_content = fs::read_to_string(&args.pipeline)
+        .with_context(|| format!("Could not read pipeline file {:?}", args.pipeline))?;
+    let aspects: Vec<Aspect> = serde_json::from_str(&pipeline_content)
+        .context("Failed to parse pipeline JSON")?;
 
-    match cli.command {
-        Commands::Start { pipeline, goal, draft } => {
-            let id = engine.start(pipeline, goal, draft)?;
-            println!("Run started. ID: {}", id);
-        }
-        Commands::Step { run_id } => {
-            let prompt = engine.step(&run_id)?;
-            println!("{}", prompt);
-        }
-        Commands::Apply { run_id, response } => {
-            let res = engine.apply(&run_id, response)?;
-            println!("{}", res);
-        }
-        Commands::Status { run_id } => {
-            println!("{}", engine.status(&run_id)?);
-        }
-        Commands::Interactive { run_id } => {
-            loop {
-                let prompt = engine.step(&run_id)?;
-                println!("\n--- CURRENT ASPECT PROMPT ---\n{}", prompt);
-                
-                println!("\n[C]ontinue (input response), [S]tatus, [Q]uit?");
-                let input: String = dialoguer::Input::new().with_prompt("Action").interact_text()?;
-                
-                match input.to_uppercase().as_str() {
-                    "C" => {
-                        let response: String = dialoguer::Input::new().with_prompt("Enter LLM Response").interact_text()?;
-                        engine.apply(&run_id, response)?;
-                    }
-                    "S" => {
-                        println!("{}", engine.status(&run_id)?);
-                    }
-                    "Q" => break,
-                    _ => println!("Unknown action."),
-                }
-                
-                if let RunStatus::Completed = engine.load_state(&run_id)?.status {
-                    println!("Run completed.");
-                    break;
-                }
-            }
-        }
-    }
+    let state = PipelineState {
+        working_draft: args.draft,
+        original_goal: args.goal,
+        current_index: 0,
+        aspects,
+    };
+
+    let driver = Driver::new(ClaudeCliClient, args.prompts);
+    let result = driver.run(state)?;
+
+    println!("\n--- FINAL OUTPUT ---\n");
+    println!("{}", result);
+
     Ok(())
 }

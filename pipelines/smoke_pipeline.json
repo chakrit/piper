@@ -1,0 +1,20 @@
+[
+  {
+    "id": "test-1",
+    "name": "Test Refiner",
+    "type": "refiner",
+    "description": "Double the text."
+  },
+  {
+    "id": "test-gate",
+    "name": "Test Gate",
+    "type": "gate",
+    "description": "Stop here."
+  },
+  {
+    "id": "test-2",
+    "name": "Test Refiner 2",
+    "type": "refiner",
+    "description": "Add 'DONE' to the end."
+  }
+]
