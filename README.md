@@ -32,5 +32,12 @@ optional `max_turns` limit (default: 100) shared by the root run and every fork.
 protocol. The tracked [`self-evolve` pipeline](skills/piper/pipelines/self-evolve.toml)
 distills `ultra-engineer.md` into a bounded, fork-aware self-improvement loop.
 
+For a minimal real-Lens check, run:
+
+```bash
+cargo run -- --file skills/piper/pipelines/smoke.toml run smoke \
+  --goal "Verify the Piper driver" --draft "Unverified"
+```
+
 ## License
 MIT
