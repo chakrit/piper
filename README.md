@@ -13,7 +13,8 @@ Piper is a context engineering engine that implements Aspect-Oriented Prompting.
 ## Project Structure
 - `src/`: Rust source code for the driver.
 - `piper.toml`: Pipeline definitions (Aspect sequences and turn limits).
-- `skills/piper/prompts/`: Aspect lens templates.
+- `prompts/`: Aspect lens templates.
+- `pipelines/`: Reusable pipeline configurations.
 - `docs/`: Design specifications, decisions, and guides.
 
 ## Getting Started
@@ -29,13 +30,13 @@ cargo run -- run rigour --goal "Make the draft accurate" --draft "Initial draft"
 `piper.toml` defines named pipelines. Each pipeline has an ordered `aspects` list and an
 optional `max_turns` limit (default: 100) shared by the root run and every fork. See
 [`docs/spec/aop-engine.md`](docs/spec/aop-engine.md) for the configuration and action
-protocol. The tracked [`self-evolve` pipeline](skills/piper/pipelines/self-evolve.toml)
+protocol. The tracked [`self-evolve` pipeline](pipelines/self-evolve.toml)
 distills `ultra-engineer.md` into a bounded, fork-aware self-improvement loop.
 
 For a minimal real-Lens check, run:
 
 ```bash
-cargo run -- --file skills/piper/pipelines/smoke.toml run smoke \
+cargo run -- --file pipelines/smoke.toml run smoke \
   --goal "Verify the Piper driver" --draft "Unverified"
 ```
 

@@ -1,5 +1,5 @@
 # Copy this file to piper.toml or select it with:
-# cargo run -- --file skills/piper/pipelines/self-evolve.toml run self-evolve ...
+# cargo run -- --file pipelines/self-evolve.toml run self-evolve ...
 [llm]
 invocation = "opencode run -m {{model}} {{prompt}}"
 system_prompt = "You are a highly capable AI assistant."

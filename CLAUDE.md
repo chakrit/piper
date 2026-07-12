@@ -5,8 +5,8 @@ It decomposes complex alignment constraints into modular "Aspects," processing t
 sequentially via a state-machine driver to eliminate instruction drift.
 
 ## Architecture
-- `skills/piper/pipelines/`: Pipeline definitions (Aspect sequences).
-- `skills/piper/prompts/`: Aspect lens templates.
+- `pipelines/`: Pipeline definitions (Aspect sequences).
+- `prompts/`: Aspect lens templates.
 - `src/main.rs`: The Rust state-machine driver.
 
 ## Core Tooling
@@ -24,4 +24,3 @@ Managed by [ACE](https://github.com/ace-rs/ace).
 third-party lookup → `vendor/`; a how-to → `guides/`; our own design/surface →
 `spec/`; unsettled exploration → `scratch/` (last resort, opened with a
 "not spec/decision because ___" line). Nothing defaults to `scratch/`.
-

@@ -43,7 +43,7 @@ enum Commands {
         draft: String,
 
         /// Directory containing prompt templates
-        #[arg(short, long, default_value = "skills/piper/prompts")]
+        #[arg(short, long, default_value = "prompts")]
         prompts: PathBuf,
     },
 }

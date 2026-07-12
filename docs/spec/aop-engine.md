@@ -70,7 +70,7 @@ file = "aspects/spec-align.toml"
 ```
 
 The `run` command accepts a pipeline name, `--goal`, `--draft`, and an optional `--prompts`
-directory. Its default prompt directory is `skills/piper/prompts`. `--file` selects the
+directory. Its default prompt directory is `prompts`. `--file` selects the
 configuration file and defaults to `piper.toml`.
 
 ## Worker Lens action protocol
