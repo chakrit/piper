@@ -2,6 +2,7 @@ import json
 import sys
 import os
 from typing import List, Dict
+from skills.piped_piper.scripts.actions.call_llm import CallLlm
 
 class PipedPiperEngine:
     def __init__(self, pipeline_path: str, prompt_dir: str):
@@ -16,13 +17,10 @@ class PipedPiperEngine:
 
     def call_llm(self, prompt: str) -> str:
         """
-        Hook for LLM integration. 
-        In a real scenario, this would call the OpenAI/Anthropic API or a local CLI.
+        Executes the provided prompt via the configured LLM Unit-of-Work.
         """
-        # This is a placeholder. The user should replace this with their actual LLM client.
-        print("\n[Driver] Calling LLM for Aspect processing...")
-        # Example: return subprocess.check_output(["claude", "-p", prompt]).decode('utf-8')
-        raise NotImplementedError("Please implement call_llm with your preferred LLM client.")
+        print("\n[Driver] Calling LLM...")
+        return CallLlm(prompt).run()
 
     def run(self, initial_draft: str, original_goal: str = ""):
         self.working_draft = initial_draft
