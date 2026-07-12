@@ -1,16 +1,28 @@
-# Session State - 2026-07-12
+# Session State: 2026-07-12
 
-<!-- not spec/decision because: session checkpoint for resume -->
+## Summary
+Reworked the Rust driver to be config-driven and aligned with PRODIGY9 coding laws.
 
-## Work Completed
-- **Onboarding**: Ran `ace-init`. Updated `CLAUDE.md` and `ace.toml` (.skills: `general-coding`, `ace`, `ace-save`, `visualise`, `ace-docs`).
-- **Documentation**: Scaffolded `docs/` with single-gate routing and linked to `CLAUDE.md`.
-- **Architecture**: Completed Phase 2 Spec Run. Created `docs/spec/aop-engine.md` defining the AOP state machine, contracts, and template variables.
+### Functional Changes
+- Moved pipeline definitions from JSON to `config.toml`.
+- Implemented `src/config.rs` for TOML loading and pipeline resolution (supports inline and reference-to-file aspects).
+- Updated `src/llm.rs` to support configurable invocation commands via `ConfigurableLlmClient`.
+- Refactored CLI to use proper subcommands:
+    - `run <pipeline_name>`: Executes a pipeline.
+    - `init`: Scaffolds a basic `config.toml` with default settings and a sample pipeline.
 
-## Current Status
-The project is now oriented, the architectural intent is documented, and ACE is configured. The engine exists as a logic shell with a placeholder for LLM integration.
+### Law Alignment (Audit Results)
+- Implemented **Unit-of-Work Pattern** for all filesystem mutations via the new `src/actions/` module.
+- Established **TDD loop** for `Config` logic, with unit tests covering resolution and error paths in `src/config.rs`.
+- Verified `cargo clippy` and `cargo test` are clean.
 
-## Pending Work (Next Steps)
-- [ ] **LLM Integration**: Implement `call_llm` hook in `skills/piped_piper/scripts/driver.py` to connect to a real LLM backend.
-- [ ] **Pipeline Development**: Define and test initial pipeline JSONs in `skills/piped_piper/pipelines/`.
-- [ ] **Prompt Refinement**: Iterate on `aspect-refiner.md` and `final-alignment.md` to optimize alignment quality.
+## Working Tree Status
+- `config.toml`: Scaffolding created via `init`.
+- `src/actions/`: New module for mutation owners (`ReadConfig`, `WriteConfig`, `ReadAspectFile`).
+- `src/config.rs`: Refactored to use actions; added comprehensive unit tests.
+- `src/main.rs`: Updated for subcommand architecture and `AppContext`.
+- Legacy JSON files removed.
+
+## Next Steps
+- [ ] Commit changes.
+- [ ] (Optional) Align LLM system prompt/templates to ensure `violations_found` is always an integer to avoid `serde_json` parse errors.

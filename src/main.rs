@@ -1,53 +1,103 @@
-use anyhow::{Context, Result};
+#![deny(warnings)]
+
+use anyhow::Result;
 use clap::Parser;
-use std::fs;
 use std::path::PathBuf;
 
 mod driver;
 mod llm;
 mod models;
 mod state;
+mod config;
+mod actions;
 
 use driver::Driver;
-use llm::ClaudeCliClient;
-use models::Aspect;
 use state::PipelineState;
+use actions::{AppContext, WriteConfig};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args {
-    /// Path to the pipeline JSON file
-    #[arg(short, long)]
-    pipeline: PathBuf,
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    /// The original goal/objective
-    #[arg(short, long)]
-    goal: String,
+#[derive(clap::Subcommand, Debug)]
+enum Commands {
+    /// Scaffold basic TOML settings
+    Init,
+    /// Run a pipeline
+    Run {
+        /// Name of the pipeline to run (from config.toml)
+        pipeline_name: String,
 
-    /// The initial draft of the content
-    #[arg(short, long)]
-    draft: String,
+        /// The original goal/objective
+        #[arg(short, long)]
+        goal: String,
 
-    /// Directory containing prompt templates
-    #[arg(short, long, default_value = "skills/piped_piper/prompts")]
-    prompts: PathBuf,
+        /// The initial draft of the content
+        #[arg(short, long)]
+        draft: String,
+
+        /// Directory containing prompt templates
+        #[arg(short, long, default_value = "skills/piped_piper/prompts")]
+        prompts: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
+    let ctx = AppContext;
 
-    let pipeline_content = fs::read_to_string(&args.pipeline)
-        .with_context(|| format!("Could not read pipeline file {:?}", args.pipeline))?;
-    let aspects: Vec<Aspect> =
-        serde_json::from_str(&pipeline_content).context("Failed to parse pipeline JSON")?;
+    match cli.command {
+        Commands::Init => {
+            let mut config = config::Config::default();
+            config.llm.invocation = "gpt-4o".to_string();
 
-    let state = PipelineState::new(args.draft, args.goal, aspects);
+            let mut pipelines = std::collections::HashMap::new();
+            pipelines.insert(
+                "default".to_string(),
+                config::Pipeline {
+                    aspects: vec![config::AspectStep::Inline(crate::models::Aspect {
+                        id: "refiner-1".to_string(),
+                        name: "Initial Refiner".to_string(),
+                        aspect_type: crate::models::AspectType::Refiner,
+                        description: "A basic refiner to get started".to_string(),
+                    })],
+                },
+            );
+            config.pipelines = pipelines;
 
-    let driver = Driver::new(ClaudeCliClient, args.prompts);
-    let result = driver.run(state)?;
+            let toml_string = toml::to_string_pretty(&config)?;
+            let action = WriteConfig {
+                path: PathBuf::from("config.toml"),
+                content: toml_string,
+            };
+            action.run(&ctx)?;
+            println!("Created config.toml with default settings.");
+        }
+        Commands::Run {
+            pipeline_name,
+            goal,
+            draft,
+            prompts,
+        } => {
+            let config = config::Config::load(&ctx, PathBuf::from("config.toml"))?;
+            let aspects = config.resolve_pipeline(&ctx, &pipeline_name)?;
 
-    println!("\n--- FINAL OUTPUT ---\n");
-    println!("{}", result);
+            let state = PipelineState::new(draft, goal, aspects);
+
+            let client = llm::ConfigurableLlmClient {
+                invocation: config.llm.invocation,
+            };
+
+            let driver = Driver::new(client, prompts);
+            let result = driver.run(state)?;
+
+            println!("\n--- FINAL OUTPUT ---\n");
+            println!("{}", result);
+        }
+    }
 
     Ok(())
 }

@@ -51,7 +51,7 @@ impl<C: LlmClient> Driver<C> {
     pub fn run(&self, mut state: PipelineState) -> Result<String> {
         while state.current_index < state.aspects.len() {
             let aspect = state.current_aspect().clone();
-            println!("\n>>> Processing: {} ({})", aspect.name, aspect.id);
+            println!("\n>>> Processing: {} ({} - {})", aspect.name, aspect.aspect_type.label(), aspect.id);
 
             match aspect.aspect_type {
                 AspectType::Gate => {

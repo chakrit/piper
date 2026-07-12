@@ -6,19 +6,26 @@ pub trait LlmClient {
     fn call(&self, prompt: &str) -> Result<LlmResponse>;
 }
 
-pub struct ClaudeCliClient;
+pub struct ConfigurableLlmClient {
+    pub invocation: String,
+}
 
-impl LlmClient for ClaudeCliClient {
+impl LlmClient for ConfigurableLlmClient {
     fn call(&self, prompt: &str) -> Result<LlmResponse> {
-        let output = Command::new("claude")
-            .arg("-p")
+        let parts: Vec<&str> = self.invocation.split_whitespace().collect();
+        if parts.is_empty() {
+            anyhow::bail!("LLM invocation command is empty");
+        }
+
+        let output = Command::new(parts[0])
+            .args(&parts[1..])
             .arg(prompt)
             .output()
-            .context("Failed to execute claude CLI")?;
+            .with_context(|| format!("Failed to execute LLM command: {}", self.invocation))?;
 
         if !output.status.success() {
             anyhow::bail!(
-                "Claude CLI exited with error: {}",
+                "LLM command exited with error: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }

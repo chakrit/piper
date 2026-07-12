@@ -23,11 +23,11 @@ impl PipelineState {
     }
 
     pub fn jump_to_id(&mut self, id: &str) -> Result<()> {
-        if let Some(pos) = self.aspects.iter().position(|a| a.id == id) {
-            self.current_index = pos;
-            Ok(())
-        } else {
-            anyhow::bail!("Aspect ID {} not found in pipeline", id)
-        }
+        let Some(pos) = self.aspects.iter().position(|a| a.id == id) else {
+            anyhow::bail!("Aspect ID {} not found in pipeline", id);
+        };
+
+        self.current_index = pos;
+        Ok(())
     }
 }
