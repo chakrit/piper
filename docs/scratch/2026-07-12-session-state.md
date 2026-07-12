@@ -22,5 +22,5 @@ Reworked the Rust driver to be config-driven, renamed the project to `piper`, an
 - `config.toml` exists as a local artifact.
 
 ## Next Steps
-- [x] Align LLM system prompt/templates to ensure `violations_found` is always an integer to avoid `serde_json` parse errors.
+- Nothing pending.
 
