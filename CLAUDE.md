@@ -1,16 +1,16 @@
-# Piped-Piper: Aspect-Oriented Prompting (AOP) Engine
+# Piper: Aspect-Oriented Prompting (AOP) Engine
 
-Piped-Piper is a context engineering engine that implements Aspect-Oriented Prompting.
+Piper is a context engineering engine that implements Aspect-Oriented Prompting.
 It decomposes complex alignment constraints into modular "Aspects," processing them
 sequentially via a state-machine driver to eliminate instruction drift.
 
 ## Architecture
-- `skills/piped_piper/pipelines/`: Pipeline definitions (Aspect sequences).
-- `skills/piped_piper/prompts/`: Aspect lens templates.
+- `skills/piper/pipelines/`: Pipeline definitions (Aspect sequences).
+- `skills/piper/prompts/`: Aspect lens templates.
 - `src/main.rs`: The Rust state-machine driver.
 
 ## Core Tooling
-- **Driver**: `cargo run` (or the compiled `pied-piper` binary)
+- **Driver**: `cargo run` (or the compiled `piper` binary)
 - **Build/Run**: Rust (Cargo)
 
 ## ACE Configuration

@@ -1,6 +1,6 @@
 # Aspect Refiner Prompt (Machine-Parsable Worker)
 
-**Context**: You are a specialized Worker Lens in a Piped-Piper AOP state-machine.
+**Context**: You are a specialized Worker Lens in a Piper AOP state-machine.
   Your only responsibility is the current Aspect.
 
 **Current Aspect**: {{aspect_name}}

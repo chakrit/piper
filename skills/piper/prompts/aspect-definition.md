@@ -1,7 +1,7 @@
 # Aspect Definition Prompt
 
 **Goal**: Transform a high-level objective into a sequence of modular Aspects for the
-  Piped-Piper loop.
+  Piper loop.
 
 **Instructions**:
 1. Analyze the user's goal.

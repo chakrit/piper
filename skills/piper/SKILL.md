@@ -1,19 +1,19 @@
 ---
-name: piped-piper
+name: piper
 description: Implements Aspect-Oriented Prompting (AOP) to maximize alignment by looping a
   draft through a series of modular "Aspects". Use this skill when you need to refine
   a complex output against multiple, potentially conflicting constraints (e.g.,
   security, performance, brand, UX) without using adversarial prompting or
-  monolithic prompts that cause instruction drift. Trigger on "piped-piper",
+  monolithic prompts that cause instruction drift. Trigger on "piper",
   "aspect-oriented prompting", "AOP loop", "pipe through aspects", or when a task
   requires multi-dimensional alignment.
 ---
 
-# Piped-Piper: Aspect-Oriented Prompting (AOP) Engine
+# Piper: Aspect-Oriented Prompting (AOP) Engine
 
-Piped-Piper is a context engineering engine that adapts the software engineering
+Piper is a context engineering engine that adapts the software engineering
 concept of Aspect-Oriented Programming (AOP) to LLM prompting. Instead of a single,
-monolithic prompt or manual iterative refinement, Piped-Piper uses a deterministic
+monolithic prompt or manual iterative refinement, Piper uses a deterministic
 pipeline of modular "Aspects" executed by a state-machine driver.
 
 ## The Concept: What is an Aspect?
@@ -27,7 +27,7 @@ instruction drift.
 
 ## The Engine Workflow
 
-The Piped-Piper architecture consists of a **Deterministic Driver** (a small
+The Piper architecture consists of a **Deterministic Driver** (a small
 program) and **Worker Lenses** (LLM calls).
 
 ### 1. Pipeline Definition
@@ -55,6 +55,6 @@ piped edits.
 ## Automation & Apparatus
 
 - **`pipelines/`**: JSON definitions of Aspect sequences.
-- **`pied-piper` (Rust binary)**: The high-performance state-machine driver that automates the pipe, supports human-in-the-loop "Stop-Gates", and allows for LLM-triggered "Rewinds" to previous aspects.
+- **`piper` (Rust binary)**: The high-performance state-machine driver that automates the pipe, supports human-in-the-loop "Stop-Gates", and allows for LLM-triggered "Rewinds" to previous aspects.
 - **`prompts/`**: Templated prompts that enforce machine-parsable output for Worker
   Lenses.

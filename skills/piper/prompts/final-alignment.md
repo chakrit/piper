@@ -1,7 +1,7 @@
 # Final Alignment Prompt
 
 **Context**: The Working Draft has successfully passed through all designated Aspects
-  in the Piped-Piper loop.
+  in the Piper loop.
 
 **Original Goal**: {{original_goal}}
 **Final Working Draft**: {{final_draft}}
