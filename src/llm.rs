@@ -1,6 +1,6 @@
+use crate::models::LlmResponse;
 use anyhow::{Context, Result};
 use std::process::Command;
-use crate::models::LlmResponse;
 
 pub trait LlmClient {
     fn call(&self, prompt: &str) -> Result<LlmResponse>;
@@ -24,7 +24,7 @@ impl LlmClient for ClaudeCliClient {
         }
 
         let response_text = String::from_utf8_lossy(&output.stdout);
-        
+
         let json_str = if let Some(start) = response_text.find("```json") {
             let content = &response_text[start + 7..];
             if let Some(end) = content.find("```") {

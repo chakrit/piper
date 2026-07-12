@@ -1,10 +1,10 @@
+use crate::llm::LlmClient;
+use crate::models::AspectType;
+use crate::state::PipelineState;
 use anyhow::{Context, Result};
 use dialoguer::{Input, Select};
 use std::fs;
 use std::path::PathBuf;
-use crate::llm::LlmClient;
-use crate::models::{AspectType};
-use crate::state::PipelineState;
 
 pub struct Driver<C: LlmClient> {
     client: C,
@@ -69,7 +69,7 @@ impl<C: LlmClient> Driver<C> {
 
                     let response = self.client.call(&prompt)?;
                     state.working_draft = response.refined_draft;
-                    
+
                     println!("[Driver] Violations found: {}", response.violations_found);
 
                     if let Some(next_id) = response.next_aspect_id {

@@ -3,15 +3,15 @@ use clap::Parser;
 use std::fs;
 use std::path::PathBuf;
 
-mod models;
-mod llm;
-mod state;
 mod driver;
+mod llm;
+mod models;
+mod state;
 
-use models::{Aspect};
-use llm::ClaudeCliClient;
-use state::PipelineState;
 use driver::Driver;
+use llm::ClaudeCliClient;
+use models::Aspect;
+use state::PipelineState;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -35,11 +35,11 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    
+
     let pipeline_content = fs::read_to_string(&args.pipeline)
         .with_context(|| format!("Could not read pipeline file {:?}", args.pipeline))?;
-    let aspects: Vec<Aspect> = serde_json::from_str(&pipeline_content)
-        .context("Failed to parse pipeline JSON")?;
+    let aspects: Vec<Aspect> =
+        serde_json::from_str(&pipeline_content).context("Failed to parse pipeline JSON")?;
 
     let state = PipelineState::new(args.draft, args.goal, aspects);
 
