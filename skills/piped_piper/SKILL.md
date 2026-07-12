@@ -1,0 +1,60 @@
+---
+name: piped-piper
+description: Implements Aspect-Oriented Prompting (AOP) to maximize alignment by looping a
+  draft through a series of modular "Aspects". Use this skill when you need to refine
+  a complex output against multiple, potentially conflicting constraints (e.g.,
+  security, performance, brand, UX) without using adversarial prompting or
+  monolithic prompts that cause instruction drift. Trigger on "piped-piper",
+  "aspect-oriented prompting", "AOP loop", "pipe through aspects", or when a task
+  requires multi-dimensional alignment.
+---
+
+# Piped-Piper: Aspect-Oriented Prompting (AOP) Engine
+
+Piped-Piper is a context engineering engine that adapts the software engineering
+concept of Aspect-Oriented Programming (AOP) to LLM prompting. Instead of a single,
+monolithic prompt or manual iterative refinement, Piped-Piper uses a deterministic
+pipeline of modular "Aspects" executed by a state-machine driver.
+
+## The Concept: What is an Aspect?
+
+An **Aspect** is a specialized, modular lens of constraint. It handles exactly one
+dimension (e.g., "Security", "Brand Voice").
+
+By "piping" a draft through a sequence of Aspects via a programmatic driver, we
+ensure every constraint is isolated and enforced in a fresh context, eliminating
+instruction drift.
+
+## The Engine Workflow
+
+The Piped-Piper architecture consists of a **Deterministic Driver** (a small
+program) and **Worker Lenses** (LLM calls).
+
+### 1. Pipeline Definition
+A **Pipeline** is a structured sequence of Aspects (defined in `pipelines/`). Each
+Aspect contains a name and a rigorous lens description.
+
+### 2. The Autonomous Loop (The State Machine)
+The Driver program executes the following state transitions:
+`INPUT` $\rightarrow$ `ASPECT_1` $\rightarrow$ `ASPECT_2` $\rightarrow$ ... $\rightarrow$
+`ASPECT_N` $\rightarrow$ `SYNTHESIS` $\rightarrow$ `OUTPUT`
+
+For each transition:
+1. **Provision Worker**: The Driver creates a fresh LLM context.
+2. **Inject Aspect**: The Driver provides the current Working Draft + Aspect Lens +
+   Machine-Parsable Output requirement.
+3. **Parse Output**: The Driver extracts the refined draft from the Worker's
+   structured response (JSON).
+4. **Update State**: The extracted draft becomes the global "Working Draft" for the
+   next state.
+
+### 3. Final Synthesis
+The Driver performs a final "Joint Alignment" pass to ensure cohesion across the
+piped edits.
+
+## Automation & Apparatus
+
+- **`pipelines/`**: JSON/TOML definitions of Aspect sequences.
+- **`scripts/driver.py`**: The state-machine implementation that automates the pipe.
+- **`prompts/`**: Templated prompts that enforce machine-parsable output for Worker
+  Lenses.

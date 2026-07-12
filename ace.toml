@@ -1,0 +1,8 @@
+school = "prod9/school"
+skills = [
+    "general-coding",
+    "ace",
+    "ace-save",
+    "visualise",
+    "ace-docs",
+]

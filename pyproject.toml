@@ -1,0 +1,16 @@
+[project]
+name = "pied-piper"
+version = "0.1.0"
+description = "Piped-Piper AOP Engine"
+authors = [
+    { name = "Chakrit Wichian", email = "service@chakrit.net" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+piped-driver = "skills.piped_piper.scripts.driver:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
