@@ -7,11 +7,11 @@ sequentially via a state-machine driver to eliminate instruction drift.
 ## Architecture
 - `skills/piped_piper/pipelines/`: Pipeline definitions (Aspect sequences).
 - `skills/piped_piper/prompts/`: Aspect lens templates.
-- `skills/piped_piper/scripts/driver.py`: The state-machine driver.
+- `src/main.rs`: The Rust state-machine driver.
 
 ## Core Tooling
-- **Driver**: `piped-driver` (via `pyproject.toml`)
-- **Build/Run**: Python 3.12+, Hatchling.
+- **Driver**: `cargo run` (or the compiled `pied-piper` binary)
+- **Build/Run**: Rust (Cargo)
 
 ## ACE Configuration
 Managed by [ACE](https://github.com/ace-rs/ace).

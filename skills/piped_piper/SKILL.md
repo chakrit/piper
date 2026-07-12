@@ -54,7 +54,7 @@ piped edits.
 
 ## Automation & Apparatus
 
-- **`pipelines/`**: JSON/TOML definitions of Aspect sequences.
-- **`scripts/driver.py`**: The state-machine implementation that automates the pipe.
+- **`pipelines/`**: JSON definitions of Aspect sequences.
+- **`pied-piper` (Rust binary)**: The high-performance state-machine driver that automates the pipe, supports human-in-the-loop "Stop-Gates", and allows for LLM-triggered "Rewinds" to previous aspects.
 - **`prompts/`**: Templated prompts that enforce machine-parsable output for Worker
   Lenses.
