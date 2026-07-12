@@ -20,7 +20,7 @@ You MUST respond in valid JSON. No preamble, no trailing prose.
   "aspect": "{{aspect_name}}",
   "refined_draft": "The updated content of the draft",
   "changes_made": "Brief description of what was altered",
-  "violations_found": true/false
+  "violations_found": 0 // Integer count of constraints violated in the draft
 }
 ```
 🚨 **CRITICAL**: If the output is not valid JSON, the state-machine driver will fail.

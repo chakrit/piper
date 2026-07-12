@@ -26,6 +26,7 @@ ace.local.toml
 
 # Added by cargo
 /target
+config.toml
 
 # Python
 __pycache__/
