@@ -21,11 +21,28 @@ Reworked the Rust driver to be config-driven, renamed the project to `piper`, an
 - Implemented **Unit-of-Work Pattern** for filesystem mutations.
 - Established **TDD loop** for core logic.
 
+## Recent Updates (Current Session)
+- **Git Setup**: Created GitHub repository `chakrit/piper` and configured remote `gh`.
+- **Documentation**:
+    - Initialized and expanded `README.md` with architecture and project structure.
+    - Formalized **AOP Engine Specification** (`docs/spec/aop-engine.md`), aligning it with the Rust implementation (TOML, corpus, dynamic routing, and termination).
+    - Added **Pipeline Design Specification** (`docs/spec/pipeline-design.md`), establishing the "Refining Funnel" hierarchy (Foundational $\rightarrow$ Structural $\rightarrow$ Superficial).
+- **Pipeline Forking & DSL**:
+    - Implemented a discrete Action-based DSL (`AspectAction`) for LLM responses, replacing fixed result structs. Actions include `Refine`, `AddKnowledge`, `EditKnowledge`, `Fork`, `Jump`, `Merge`, and `Terminate`.
+    - Added `SessionContext` to track result sets across virtual forks, allowing them to be merged back into a main pipeline via the `Merge` action.
+    - Enabled "virtual forks" where aspects can spin off secondary pipelines with their own goals and prompts.
+- **Reliability & Recovery**:
+    - Decoupled `LlmClient` from parsing; it now returns raw strings.
+    - Implemented a recovery loop: if initial JSON parsing fails, the driver uses a recovery system prompt (`aspect-recover.md`) to ask the LLM to fix the formatting of the bad response.
+
 ## Working Tree Status
 - Core refactor implemented and prompts aligned.
 - `piper.toml` remains a local artifact.
 - Visualizations of the flow stored in `docs/spec/`.
+- Branch `main` is ahead of `gh/main` by 4 commits.
 
 ## Next Steps
+- **Prompting**: Update `aspect-refiner.md` to use the new DSL format.
+- **Deployment**: Push local commits to the `gh` remote.
 - Verify end-to-end run using a test configuration.
-- Stress-test dynamic pipeline routing via `next_aspect_id`.
+- Stress-test dynamic pipeline routing via `next_aspect_id` and the new `Jump` action.

@@ -2,7 +2,21 @@ use crate::models::Aspect;
 use anyhow::Result;
 use std::collections::HashMap;
 
+pub struct SessionContext {
+    pub fork_results: HashMap<String, String>,
+}
+
+impl SessionContext {
+    pub fn new() -> Self {
+        Self {
+            fork_results: HashMap::new(),
+        }
+    }
+}
+
 pub struct PipelineState {
+    pub fork_id: Option<String>,
+    pub fork_prompt: Option<String>,
     pub working_draft: String,
     pub original_goal: String,
     pub current_index: usize,
@@ -13,6 +27,8 @@ pub struct PipelineState {
 impl PipelineState {
     pub fn new(working_draft: String, original_goal: String, aspects: Vec<Aspect>) -> Self {
         Self {
+            fork_id: None,
+            fork_prompt: None,
             working_draft,
             original_goal,
             current_index: 0,

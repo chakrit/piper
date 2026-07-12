@@ -89,7 +89,8 @@ fn main() -> Result<()> {
             let config = config::Config::load(&ctx, cli.config_file)?;
             let aspects = config.resolve_pipeline(&ctx, &pipeline_name)?;
 
-            let state = PipelineState::new(draft, goal, aspects);
+                let state = PipelineState::new(draft, goal, aspects);
+                let mut ctx = state::SessionContext::new();
 
                 let client = llm::ConfigurableLlmClient {
                     invocation: config.llm.invocation,
@@ -97,11 +98,14 @@ fn main() -> Result<()> {
                     default_model: config.llm.default_model,
                 };
 
-            let driver = Driver::new(client, prompts);
-            let result = driver.run(state)?;
+                let driver = Driver::new(client, prompts);
+                let results = driver.run(&mut ctx, state)?;
 
-            println!("\n--- FINAL OUTPUT ---\n");
-            println!("{}", result);
+                println!("\n--- FINAL OUTPUTS ---");
+                for (i, res) in results.iter().enumerate() {
+                    println!("\n--- Output {} ---\n", i + 1);
+                    println!("{}", res);
+                }
         }
     }
 

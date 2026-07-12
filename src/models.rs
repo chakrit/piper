@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -18,8 +17,43 @@ impl AspectType {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum AspectAction {
+    Refine {
+        draft: String,
+    },
+    AddKnowledge {
+        key: String,
+        value: String,
+    },
+    EditKnowledge {
+        key: String,
+        value: String,
+    },
+    Fork {
+        id: String,
+        prompt: String,
+        goal: String,
+        draft: String,
+        start_aspect_id: Option<String>,
+    },
+    Jump {
+        id: String,
+    },
+    Merge {
+        fork_ids: Vec<String>,
+    },
+    Terminate,
+}
+
+impl Default for AspectAction {
+    fn default() -> Self {
+        Self::Refine { draft: String::new() }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-#[serde(default)]
 pub struct Aspect {
     pub id: String,
     pub name: String,
@@ -32,9 +66,6 @@ pub struct Aspect {
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct LlmResponse {
-    pub refined_draft: String,
+    pub actions: Vec<AspectAction>,
     pub violations_found: u32,
-    pub next_aspect_id: Option<String>,
-    pub knowledge: HashMap<String, String>,
-    pub terminate: bool,
 }
