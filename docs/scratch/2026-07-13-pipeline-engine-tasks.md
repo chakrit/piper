@@ -4,9 +4,9 @@
 
 ## Resume state
 
-- Branch: `main`, ahead of `gh/main` by 17 commits before this breadcrumb update. The only
-  unrelated working-tree entry is the pre-existing untracked `tmp/` directory; leave it
-  untouched unless the user explicitly scopes it in.
+- Branch: `main` at `8e60c6c Make pipeline progress observable`. The only unrelated
+  working-tree entry is the pre-existing untracked `tmp/` directory; leave it untouched
+  unless the user explicitly scopes it in.
 - Accepted the durable run contract in `docs/spec/run-lifecycle.md`: XDG project state,
   stable pipeline IDs, ULID run IDs with human-friendly prefixes, per-pipeline active
   pointers, and interactive selection for ambiguous `continue`/`abort` commands.
@@ -24,8 +24,14 @@
   environment interpolation, defaults, and resolved file-backed Aspects. The built-in
   Worker and recovery templates are compiled into the binary; `--prompts` remains the
   explicit custom-directory override.
-- Required verification passed after the audit: `cargo fmt --check`, clippy over all
-  targets/features with warnings denied, 46 unit tests, 9 CLI tests, and `git diff --check`.
+- Added structured terminal progress output in `8e60c6c Make pipeline progress observable`.
+  Runs now expose pipeline identity, Request, Aspect position and identity, branch context,
+  resolved model, turn/recovery budgets, Corpus and pending-fork counts, accepted actions,
+  state transitions, gates, stop/completion summaries, and formatted final outputs. Recovery
+  output now includes the parse error, rejected response, shared-budget consumption, and
+  recovered command; malformed recovered DSL carries explicit error context.
+- Required verification passed after the logging pass: `cargo fmt --check`, clippy over all
+  targets/features with warnings denied, 46 unit tests, 10 CLI tests, and `git diff --check`.
 - A complete checkout scan found no tracked, ignored, cached, or hidden Python artifacts.
   Git history only records the already-deleted legacy Python tree in `67cd25f` and
   `0fe8100`; do not rewrite history unless explicitly requested.
@@ -56,13 +62,11 @@
    `JUMP` with retained Corpus; `STOP` propagation; child/root `DONE`; formatter recovery;
    exact shared-budget boundaries; and automated gate behavior where feasible.
 2. Fix every engine defect exposed by those fixtures before increasing complexity.
-3. Finish the `console 0.16.2` safety audit at the user-selected depth, then port the
-   smallest fitting logging stack into Piper. Add output-focused tests and improve run,
-   fork, recovery, gate, stop, and completion logs without mixing this into the Goal-removal
-   commit.
-   Logs must correlate every event with Aspect ID/name and branch identity, and print the
-   exact rendered Worker input plus raw output so a human can eyeball-debug a run. Recovery
-   calls need the same visibility.
+3. Decide whether exact rendered Worker prompts and raw valid responses should be exposed
+   through an opt-in verbose/transcript mode. The normal progress log is complete and tested,
+   but deliberately prints accepted DSL actions rather than every full prompt and raw model
+   response. If transcript mode is approved, revisit the pending `console 0.16.2` safety
+   audit before adding a logging dependency; recovery calls need equivalent visibility.
 4. Expand recovery acceptance coverage beyond the committed shared-budget test: successful
    one-shot recovery through the CLI, preserved Corpus during recovery, malformed recovery
    failure, and recovery inside a fork.
@@ -75,11 +79,11 @@
 
 ## Verification state
 
-After `e01b3a0`, these passed:
+After `8e60c6c`, these passed:
 
 - `cargo fmt --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test` (46 unit tests and 9 CLI tests)
+- `cargo test` (46 unit tests and 10 CLI tests)
 - `git diff --check`
 
 Rerun all checks before each code commit.
