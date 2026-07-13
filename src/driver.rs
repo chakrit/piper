@@ -24,6 +24,59 @@ pub struct DriveOutcome {
     pub status: DriveStatus,
 }
 
+pub enum Checkpoint<'a> {
+    Calling {
+        prompt: &'a str,
+        model: Option<&'a str>,
+        recovery: bool,
+    },
+    Responded {
+        raw_response: &'a str,
+    },
+    Applied {
+        transition: &'a str,
+    },
+    WaitingAtGate,
+}
+
+pub trait Checkpointer {
+    fn checkpoint(
+        &mut self,
+        ctx: &SessionContext,
+        state: &PipelineState,
+        event: Checkpoint<'_>,
+    ) -> Result<()>;
+}
+
+struct NoopCheckpointer;
+
+impl Checkpointer for NoopCheckpointer {
+    fn checkpoint(
+        &mut self,
+        _ctx: &SessionContext,
+        _state: &PipelineState,
+        event: Checkpoint<'_>,
+    ) -> Result<()> {
+        match event {
+            Checkpoint::Calling {
+                prompt,
+                model,
+                recovery,
+            } => {
+                let _ = (prompt, model, recovery);
+            }
+            Checkpoint::Responded { raw_response } => {
+                let _ = raw_response;
+            }
+            Checkpoint::Applied { transition } => {
+                let _ = transition;
+            }
+            Checkpoint::WaitingAtGate => {}
+        }
+        Ok(())
+    }
+}
+
 impl<C: LlmClient> Driver<C> {
     pub fn new(client: C, prompt_dir: PathBuf) -> Self {
         Self { client, prompt_dir }
@@ -112,19 +165,22 @@ impl<C: LlmClient> Driver<C> {
         }
     }
 
-    pub fn drive(
+    pub fn drive(&self, ctx: &mut SessionContext, state: PipelineState) -> Result<DriveOutcome> {
+        self.drive_with(ctx, state, &mut NoopCheckpointer)
+    }
+
+    pub fn drive_with(
         &self,
         ctx: &mut SessionContext,
         mut state: PipelineState,
+        checkpointer: &mut impl Checkpointer,
     ) -> Result<DriveOutcome> {
-        let mut all_results = Vec::new();
-
         loop {
             if state.frame().current_index >= state.aspects.len() {
                 if state.is_root() {
                     return Ok(DriveOutcome {
                         state,
-                        status: DriveStatus::Done(all_results),
+                        status: DriveStatus::Done(Vec::new()),
                     });
                 }
                 Self::ensure_no_unjoined_forks(&state, "return")?;
@@ -148,6 +204,7 @@ impl<C: LlmClient> Driver<C> {
 
             match aspect.aspect_type {
                 AspectType::Gate => {
+                    checkpointer.checkpoint(ctx, &state, Checkpoint::WaitingAtGate)?;
                     return Ok(DriveOutcome {
                         state,
                         status: DriveStatus::WaitingAtGate,
@@ -170,10 +227,26 @@ impl<C: LlmClient> Driver<C> {
                         )
                         .replace("{{context}}", &context);
 
+                    checkpointer.checkpoint(
+                        ctx,
+                        &state,
+                        Checkpoint::Calling {
+                            prompt: &prompt,
+                            model: aspect.model.as_deref(),
+                            recovery: false,
+                        },
+                    )?;
                     let raw_response = self.client.call(&prompt, aspect.model.as_deref())?;
+                    checkpointer.checkpoint(
+                        ctx,
+                        &state,
+                        Checkpoint::Responded {
+                            raw_response: &raw_response,
+                        },
+                    )?;
 
-                    let action = match AspectAction::parse(&raw_response) {
-                        Ok(action) => action,
+                    let (action, accepted_transition) = match AspectAction::parse(&raw_response) {
+                        Ok(action) => (action, raw_response.clone()),
                         Err(_) => {
                             ctx.consume_recovery(state.max_recoveries)?;
                             println!("[Driver] DSL parsing failed. Attempting recovery...");
@@ -181,12 +254,30 @@ impl<C: LlmClient> Driver<C> {
 
                             let recover_prompt =
                                 format!("{}\n\nBad Response:\n{}", recover_template, raw_response);
+                            checkpointer.checkpoint(
+                                ctx,
+                                &state,
+                                Checkpoint::Calling {
+                                    prompt: &recover_prompt,
+                                    model: aspect.model.as_deref(),
+                                    recovery: true,
+                                },
+                            )?;
                             let recovered_raw =
                                 self.client.call(&recover_prompt, aspect.model.as_deref())?;
-                            AspectAction::parse(&recovered_raw)?
+                            checkpointer.checkpoint(
+                                ctx,
+                                &state,
+                                Checkpoint::Responded {
+                                    raw_response: &recovered_raw,
+                                },
+                            )?;
+                            let action = AspectAction::parse(&recovered_raw)?;
+                            (action, recovered_raw)
                         }
                     };
 
+                    let mut terminal = None;
                     match action {
                         AspectAction::Set(value) => {
                             let key = state.contribution_key();
@@ -209,23 +300,27 @@ impl<C: LlmClient> Driver<C> {
                         }
                         AspectAction::Stop(reason) => {
                             Self::ensure_no_unjoined_forks(&state, "STOP")?;
-                            return Ok(DriveOutcome {
-                                state,
-                                status: DriveStatus::Stopped(reason),
-                            });
+                            terminal = Some(DriveStatus::Stopped(reason));
                         }
                         AspectAction::Done(result) => {
                             Self::ensure_no_unjoined_forks(&state, "DONE")?;
                             println!("[Driver] LLM signaled completion.");
                             if state.is_root() {
-                                all_results.push(result);
-                                return Ok(DriveOutcome {
-                                    state,
-                                    status: DriveStatus::Done(all_results),
-                                });
+                                terminal = Some(DriveStatus::Done(vec![result]));
+                            } else {
+                                state.return_current_fork()?;
                             }
-                            state.return_current_fork()?;
                         }
+                    }
+                    checkpointer.checkpoint(
+                        ctx,
+                        &state,
+                        Checkpoint::Applied {
+                            transition: &accepted_transition,
+                        },
+                    )?;
+                    if let Some(status) = terminal {
+                        return Ok(DriveOutcome { state, status });
                     }
                 }
             }
@@ -264,6 +359,35 @@ mod tests {
     struct RecordingMockLlmClient {
         responses: Mutex<Vec<String>>,
         prompts: Mutex<Vec<String>>,
+    }
+
+    #[derive(Default)]
+    struct RecordingCheckpointer {
+        events: Vec<String>,
+    }
+
+    impl Checkpointer for RecordingCheckpointer {
+        fn checkpoint(
+            &mut self,
+            _ctx: &SessionContext,
+            state: &PipelineState,
+            event: Checkpoint<'_>,
+        ) -> Result<()> {
+            let event = match event {
+                Checkpoint::Calling { recovery, .. } => format!("calling:{recovery}"),
+                Checkpoint::Responded { raw_response } => {
+                    format!("responded:{}", raw_response.trim())
+                }
+                Checkpoint::Applied { transition } => format!(
+                    "applied:{}:{}",
+                    transition.trim(),
+                    state.frame().corpus.len()
+                ),
+                Checkpoint::WaitingAtGate => "gate".to_string(),
+            };
+            self.events.push(event);
+            Ok(())
+        }
     }
 
     impl LlmClient for RecordingMockLlmClient {
@@ -360,6 +484,51 @@ mod tests {
         assert!(matches!(outcome.status, DriveStatus::WaitingAtGate));
         assert_eq!(outcome.state.frame().current_index, 0);
         assert_eq!(outcome.state.current_aspect().id, "approval");
+    }
+
+    #[test]
+    fn test_drive_checkpoints_call_response_and_applied_transition_in_order() {
+        let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
+        std::fs::write(temp_dir.path().join("aspect-worker.md"), "{{context}}")
+            .expect("worker template should be written");
+        let client = MockLlmClient {
+            responses: Mutex::new(vec![
+                "SET durable evidence".to_string(),
+                "DONE complete".to_string(),
+            ]),
+        };
+        let driver = Driver::new(client, temp_dir.path().to_path_buf());
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Request".to_string(),
+            vec![Aspect {
+                id: "worker".to_string(),
+                name: "Worker".to_string(),
+                aspect_type: AspectType::Worker,
+                prompt: "Work".to_string(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(2).unwrap(),
+            0,
+        );
+        let mut checkpointer = RecordingCheckpointer::default();
+
+        let outcome = driver
+            .drive_with(&mut ctx, state, &mut checkpointer)
+            .expect("drive should complete");
+
+        assert!(matches!(outcome.status, DriveStatus::Done(_)));
+        assert_eq!(
+            checkpointer.events,
+            [
+                "calling:false",
+                "responded:SET durable evidence",
+                "applied:SET durable evidence:1",
+                "calling:false",
+                "responded:DONE complete",
+                "applied:DONE complete:1",
+            ]
+        );
     }
 
     #[test]
