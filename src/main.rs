@@ -69,7 +69,7 @@ fn main() -> Result<()> {
                 content: toml_string,
             };
             action.run(&ctx)?;
-            println!("Created {:?} with default settings.", config_file);
+            println!("✓ Created configuration · {}", config_file.display());
         }
         Commands::Config { pipeline_file } => {
             let cwd = std::env::current_dir()?;
@@ -125,10 +125,18 @@ fn main() -> Result<()> {
             let driver = Driver::new(client, prompt_templates);
             let results = driver.run(state)?;
 
-            println!("\n--- FINAL OUTPUTS ---");
-            for (i, res) in results.iter().enumerate() {
-                println!("\n--- Output {} ---\n", i + 1);
-                println!("{}", res);
+            if results.is_empty() {
+                println!("\nFinal outputs · none");
+            } else {
+                println!("\n╭─ Final outputs");
+                for (index, result) in results.iter().enumerate() {
+                    println!("│ Output {}", index + 1);
+                    println!("│");
+                    for line in result.lines() {
+                        println!("│ {line}");
+                    }
+                }
+                println!("╰─ End");
             }
         }
     }

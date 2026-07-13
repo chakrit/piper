@@ -3,6 +3,10 @@ use std::process::Command;
 
 pub trait LlmClient {
     fn call(&self, prompt: &str, model: Option<&str>) -> Result<String>;
+
+    fn resolve_model<'a>(&'a self, model: Option<&'a str>) -> &'a str {
+        model.unwrap_or("unspecified")
+    }
 }
 
 pub struct ConfigurableLlmClient {
@@ -12,6 +16,10 @@ pub struct ConfigurableLlmClient {
 }
 
 impl LlmClient for ConfigurableLlmClient {
+    fn resolve_model<'a>(&'a self, model: Option<&'a str>) -> &'a str {
+        model.unwrap_or(&self.default_model)
+    }
+
     fn call(&self, prompt: &str, model: Option<&str>) -> Result<String> {
         let full_prompt = format!("{}\n\n{}", self.system_prompt, prompt);
         if !self.invocation.contains("{{prompt}}") {
@@ -26,7 +34,7 @@ impl LlmClient for ConfigurableLlmClient {
             anyhow::bail!("LLM invocation command is empty");
         }
 
-        let active_model = model.unwrap_or(&self.default_model);
+        let active_model = self.resolve_model(model);
         let mut args = Vec::new();
         for part in template_parts {
             let mut replaced = part.replace("{{prompt}}", &full_prompt);

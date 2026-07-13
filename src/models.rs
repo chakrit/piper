@@ -8,15 +8,6 @@ pub enum AspectType {
     Gate,
 }
 
-impl AspectType {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Worker => "worker",
-            Self::Gate => "gate",
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Aspect {
     pub id: String,

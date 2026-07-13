@@ -168,6 +168,23 @@ fn assert_success(output: &std::process::Output) {
 }
 
 #[test]
+fn cli_reports_initialized_configuration() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let output = piper_command(temp_dir.path())
+        .current_dir(temp_dir.path())
+        .arg("init")
+        .output()
+        .expect("piper CLI should run");
+
+    assert_success(&output);
+    assert!(temp_dir.path().join("piper.toml").exists());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "✓ Created configuration · piper.toml\n"
+    );
+}
+
+#[test]
 fn cli_prints_effective_configuration() {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let project = temp_dir.path().join("project");
@@ -294,9 +311,17 @@ fn cli_runs_pipeline_incrementally() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Processing: Collect Knowledge"));
-    assert!(stdout.contains("Processing: Branch Work"));
-    assert!(stdout.contains("[Fork: f1]"));
+    assert!(stdout.contains("Piper run · black-box"));
+    assert!(stdout.contains("Worker 1/3 · Collect Knowledge"));
+    assert!(stdout.contains("Context   collect · root"));
+    assert!(stdout.contains("Budget    turn 1/8 · recovery 0/3"));
+    assert!(stdout.contains("Model     cerebras/gemma-4-31b"));
+    assert!(stdout.contains("Action    SET · Alpha requirement"));
+    assert!(stdout.contains("Worker 2/3 · Branch Work"));
+    assert!(stdout.contains("Context   branch/f1 · fork f1"));
+    assert!(stdout.contains("Action    FORK f1 · child branch"));
+    assert!(stdout.contains("Action    DONE · Black-box success"));
+    assert!(stdout.contains("Completed · 1 output"));
     assert!(stdout.contains("Black-box success"));
 }
 
@@ -364,8 +389,15 @@ fn cli_replaces_knowledge_before_relaying_it() {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("VALUE 17"));
-    assert!(!stdout.contains("VALUE wrong"));
+    assert!(stdout.contains("Action    SET · VALUE wrong"));
+    assert!(stdout.contains("Action    SET · VALUE 17"));
+
+    let final_outputs = stdout
+        .split_once("╭─ Final outputs")
+        .expect("successful run should print final outputs")
+        .1;
+    assert!(final_outputs.contains("VALUE 17"));
+    assert!(!final_outputs.contains("VALUE wrong"));
 }
 
 #[test]
@@ -402,6 +434,11 @@ fn cli_limits_recovery_calls_across_aspects() {
     );
 
     assert!(!output.status.success(), "second recovery should fail");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Recovery  1/1 · unknown DSL verb 'bad-first'"));
+    assert!(stdout.contains("Rejected  bad-first"));
+    assert!(stdout.contains("Recovered CONTINUE"));
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("max_recoveries limit of 1"), "{stderr}");
 }

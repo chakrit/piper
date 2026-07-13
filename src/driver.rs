@@ -3,7 +3,7 @@ use crate::llm::LlmClient;
 use crate::models::AspectType;
 use crate::prompt_templates::PromptTemplates;
 use crate::state::PipelineState;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use dialoguer::Select;
 
 pub struct Driver<C: LlmClient> {
@@ -72,9 +72,8 @@ impl<C: LlmClient> Driver<C> {
     }
 
     fn handle_gate(&self, state: &PipelineState) -> Result<bool> {
-        println!("\n--- 🛑 STOP-GATE: {} ---", state.current_aspect().name);
-        println!("\nREQUEST:\n\n{}\n", state.request);
-        println!("--------------------------------------------------");
+        println!("│ Request   {}", Self::one_line(&state.request));
+        println!("╰─ Waiting for approval");
 
         let options = vec!["Continue", "Abort"];
         let selection = Select::new()
@@ -89,6 +88,8 @@ impl<C: LlmClient> Driver<C> {
     }
 
     pub fn run(&self, mut state: PipelineState) -> Result<Vec<String>> {
+        Self::log_run_started(&state);
+
         loop {
             let outcome = self.drive(state)?;
             state = outcome.state;
@@ -99,10 +100,15 @@ impl<C: LlmClient> Driver<C> {
                         anyhow::bail!("Run aborted by user at gate {gate_id}");
                     }
                     state.frame_mut().current_index += 1;
+                    println!("✓ Gate approved · continuing after {gate_id}");
                 }
-                DriveStatus::Done(results) => return Ok(results),
+                DriveStatus::Done(results) => {
+                    Self::log_completed(&state, results.len());
+                    return Ok(results);
+                }
                 DriveStatus::Stopped(reason) => {
-                    println!("[Driver] LLM stopped the run: {reason}");
+                    println!("\n■ Stopped · {}", Self::one_line(&reason));
+                    Self::log_budget_used(&state);
                     return Ok(Vec::new());
                 }
             }
@@ -125,21 +131,12 @@ impl<C: LlmClient> Driver<C> {
                 continue;
             }
             let aspect = state.current_aspect().clone();
-            let fork_info = state
-                .frame()
-                .fork_id()
-                .map(|id| format!("[Fork: {}]", id))
-                .unwrap_or_default();
-            println!(
-                "\n{} >>> Processing: {} ({} - {})",
-                fork_info,
-                aspect.name,
-                aspect.aspect_type.label(),
-                aspect.id
-            );
 
             match aspect.aspect_type {
                 AspectType::Gate => {
+                    Self::log_aspect_started(&state, "Gate");
+                    println!("│ Aspect    {} · gate", aspect.id);
+
                     return Ok(DriveOutcome {
                         state,
                         status: DriveStatus::WaitingAtGate,
@@ -147,6 +144,34 @@ impl<C: LlmClient> Driver<C> {
                 }
                 AspectType::Worker => {
                     state.consume_turn()?;
+                    Self::log_aspect_started(&state, "Worker");
+                    println!("│ Aspect    {} · worker", aspect.id);
+                    println!(
+                        "│ Context   {} · {}",
+                        state.context_path(),
+                        state
+                            .frame()
+                            .fork_id()
+                            .map(|id| format!("fork {id}"))
+                            .unwrap_or_else(|| "root".to_string())
+                    );
+                    println!(
+                        "│ Budget    turn {}/{} · recovery {}/{}",
+                        state.turns_taken,
+                        state.max_turns,
+                        state.recoveries_taken,
+                        state.max_recoveries
+                    );
+                    println!(
+                        "│ State     {} corpus entries · {} pending forks",
+                        state.frame().corpus.len(),
+                        state.frame().completed_forks.len()
+                    );
+                    println!(
+                        "│ Model     {}",
+                        self.client.resolve_model(aspect.model.as_deref())
+                    );
+
                     let template = self.prompt_templates.worker(&crate::actions::AppContext)?;
 
                     let context = Self::format_aspect_context(&state);
@@ -159,21 +184,38 @@ impl<C: LlmClient> Driver<C> {
                         .replace("{{fork_prompt}}", state.frame().fork_prompt().unwrap_or(""))
                         .replace("{{context}}", &context);
 
+                    println!("│ LLM       requesting action");
                     let raw_response = self.client.call(&prompt, aspect.model.as_deref())?;
 
                     let action = match AspectAction::parse(&raw_response) {
-                        Ok(action) => action,
-                        Err(_) => {
+                        Ok(action) => {
+                            Self::log_action("Action", &action);
+                            action
+                        }
+                        Err(error) => {
                             state.consume_recovery()?;
-                            println!("[Driver] DSL parsing failed. Attempting recovery...");
+                            println!(
+                                "│ Recovery  {}/{} · {}",
+                                state.recoveries_taken, state.max_recoveries, error
+                            );
+                            println!("│ Rejected  {}", Self::one_line(&raw_response));
                             let recover_template =
                                 self.prompt_templates.recover(&crate::actions::AppContext)?;
 
                             let recover_prompt =
                                 format!("{}\n\nBad Response:\n{}", recover_template, raw_response);
+                            println!("│ LLM       requesting formatter recovery");
                             let recovered_raw =
                                 self.client.call(&recover_prompt, aspect.model.as_deref())?;
-                            AspectAction::parse(&recovered_raw)?
+                            let recovered =
+                                AspectAction::parse(&recovered_raw).with_context(|| {
+                                    format!(
+                                        "Recovery response was not valid Piper DSL: {}",
+                                        Self::one_line(&recovered_raw)
+                                    )
+                                })?;
+                            Self::log_action("Recovered", &recovered);
+                            recovered
                         }
                     };
 
@@ -182,33 +224,60 @@ impl<C: LlmClient> Driver<C> {
                         AspectAction::Set(value) => {
                             let key = state.contribution_key();
                             state.frame_mut().corpus.insert(key, value);
+                            println!(
+                                "╰─ Saved contribution · {} corpus entries",
+                                state.frame().corpus.len()
+                            );
                         }
                         AspectAction::Continue => {
+                            let joined_forks = state.frame().completed_forks.len();
+                            let returning_fork = state.frame().fork_id().map(str::to_string);
                             state.join_completed_forks();
                             if state.is_root() {
                                 state.frame_mut().current_index += 1;
+                                println!(
+                                    "╰─ Advanced · joined {joined_forks} forks · {} corpus entries",
+                                    state.frame().corpus.len()
+                                );
                             } else {
                                 state.return_current_fork()?;
+                                println!(
+                                    "╰─ Returned fork {} · joined {joined_forks} descendant forks",
+                                    returning_fork.expect("non-root frame has a fork ID")
+                                );
                             }
                         }
                         AspectAction::Fork { id, prompt } => {
+                            let fork_id = id.clone();
                             state.push_fork(id, prompt)?;
+                            println!(
+                                "╰─ Entered fork {fork_id} · depth {}",
+                                state.frames.len() - 1
+                            );
                         }
                         AspectAction::Jump(id) => {
                             Self::ensure_no_unjoined_forks(&state, "JUMP")?;
                             state.jump_to_id(&id)?;
+                            println!("╰─ Jumped to Aspect {id}");
                         }
                         AspectAction::Stop(reason) => {
                             Self::ensure_no_unjoined_forks(&state, "STOP")?;
+                            println!("╰─ Stop accepted");
                             terminal = Some(DriveStatus::Stopped(reason));
                         }
                         AspectAction::Done(result) => {
                             Self::ensure_no_unjoined_forks(&state, "DONE")?;
-                            println!("[Driver] LLM signaled completion.");
                             if state.is_root() {
+                                println!("╰─ Completion accepted");
                                 terminal = Some(DriveStatus::Done(vec![result]));
                             } else {
+                                let fork_id = state
+                                    .frame()
+                                    .fork_id()
+                                    .expect("non-root frame has a fork ID")
+                                    .to_string();
                                 state.return_current_fork()?;
+                                println!("╰─ Returned completed fork {fork_id}");
                             }
                         }
                     }
@@ -218,6 +287,60 @@ impl<C: LlmClient> Driver<C> {
                 }
             }
         }
+    }
+
+    fn log_run_started(state: &PipelineState) {
+        println!("╭─ Piper run · {}", state.pipeline_id.as_str());
+        println!("│ Request   {}", Self::one_line(&state.request));
+        println!("│ Aspects   {}", state.aspects.len());
+        println!(
+            "│ Budgets   {} turns · {} recoveries",
+            state.max_turns, state.max_recoveries
+        );
+        println!("╰─ Starting");
+    }
+
+    fn log_aspect_started(state: &PipelineState, kind: &str) {
+        println!(
+            "\n╭─ {kind} {}/{} · {}",
+            state.frame().current_index + 1,
+            state.aspects.len(),
+            state.current_aspect().name
+        );
+    }
+
+    fn log_action(label: &str, action: &AspectAction) {
+        match action {
+            AspectAction::Set(value) => println!("│ {label:<10}SET · {value}"),
+            AspectAction::Continue => println!("│ {label:<10}CONTINUE"),
+            AspectAction::Fork { id, prompt } => {
+                println!("│ {label:<10}FORK {id} · {prompt}");
+            }
+            AspectAction::Jump(id) => println!("│ {label:<10}JUMP · {id}"),
+            AspectAction::Stop(reason) => println!("│ {label:<10}STOP · {reason}"),
+            AspectAction::Done(result) => println!("│ {label:<10}DONE · {result}"),
+        }
+    }
+
+    fn log_completed(state: &PipelineState, output_count: usize) {
+        let output_label = if output_count == 1 {
+            "output"
+        } else {
+            "outputs"
+        };
+        println!("\n✓ Completed · {output_count} {output_label}");
+        Self::log_budget_used(state);
+    }
+
+    fn log_budget_used(state: &PipelineState) {
+        println!(
+            "  Budget used · {}/{} turns · {}/{} recoveries",
+            state.turns_taken, state.max_turns, state.recoveries_taken, state.max_recoveries
+        );
+    }
+
+    fn one_line(value: &str) -> String {
+        value.replace('\r', "\\r").replace('\n', "\\n")
     }
 
     fn ensure_no_unjoined_forks(state: &PipelineState, action: &str) -> Result<()> {
