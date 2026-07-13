@@ -1,11 +1,10 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum AspectAction {
-    Next,
-    AddKnowledge { key: String, value: String },
-    UpdateKnowledge { key: String, value: String },
+    Set(String),
+    Continue,
     Fork { id: String, prompt: String },
     Jump(String),
-    Merge(Vec<String>),
+    Stop(String),
     Done(String),
 }
 
@@ -24,24 +23,13 @@ impl AspectAction {
         let arguments = command.next().map(str::trim_start).unwrap_or_default();
 
         match verb {
-            "NEXT" => Self::require_no_arguments(arguments).map(|()| Self::Next),
-            "ADD-KNOWLEDGE" => Self::parse_knowledge(arguments, true),
-            "UPDATE-KNOWLEDGE" => Self::parse_knowledge(arguments, false),
+            "SET" => Self::require_text(arguments).map(Self::Set),
+            "CONTINUE" => Self::require_no_arguments(arguments).map(|()| Self::Continue),
             "FORK" => Self::parse_fork(arguments),
             "JUMP" => Self::parse_identifier(arguments, "aspect ID").map(Self::Jump),
-            "MERGE" => Self::parse_fork_ids(arguments).map(Self::Merge),
+            "STOP" => Self::require_text(arguments).map(Self::Stop),
             "DONE" => Self::require_text(arguments).map(Self::Done),
             _ => anyhow::bail!("unknown DSL verb '{verb}'"),
-        }
-    }
-
-    fn parse_knowledge(arguments: &str, is_add: bool) -> anyhow::Result<Self> {
-        let (key, value) = Self::split_identifier_and_text(arguments, "knowledge key")?;
-
-        if is_add {
-            Ok(Self::AddKnowledge { key, value })
-        } else {
-            Ok(Self::UpdateKnowledge { key, value })
         }
     }
 
@@ -49,22 +37,6 @@ impl AspectAction {
         let (id, prompt) = Self::split_identifier_and_text(arguments, "fork ID")?;
 
         Ok(Self::Fork { id, prompt })
-    }
-
-    fn parse_fork_ids(arguments: &str) -> anyhow::Result<Vec<String>> {
-        let mut fork_ids = Vec::new();
-        for id in arguments.split(',') {
-            let id = Self::parse_identifier(id, "fork ID")?;
-            if fork_ids.contains(&id) {
-                anyhow::bail!("MERGE cannot name the same fork more than once")
-            }
-            fork_ids.push(id);
-        }
-
-        if fork_ids.is_empty() {
-            anyhow::bail!("MERGE requires at least one fork ID")
-        }
-        Ok(fork_ids)
     }
 
     fn split_identifier_and_text(arguments: &str, name: &str) -> anyhow::Result<(String, String)> {
@@ -113,21 +85,11 @@ mod tests {
     #[test]
     fn parses_each_command() {
         let cases = [
-            ("NEXT", AspectAction::Next),
             (
-                "ADD-KNOWLEDGE requirement Preserve compatibility",
-                AspectAction::AddKnowledge {
-                    key: "requirement".to_string(),
-                    value: "Preserve compatibility".to_string(),
-                },
+                "SET Preserve compatibility",
+                AspectAction::Set("Preserve compatibility".to_string()),
             ),
-            (
-                "UPDATE-KNOWLEDGE requirement Preserve the stable API",
-                AspectAction::UpdateKnowledge {
-                    key: "requirement".to_string(),
-                    value: "Preserve the stable API".to_string(),
-                },
-            ),
+            ("CONTINUE", AspectAction::Continue),
             (
                 "FORK alternative-1 Explore the implementation option",
                 AspectAction::Fork {
@@ -137,11 +99,8 @@ mod tests {
             ),
             ("JUMP audit", AspectAction::Jump("audit".to_string())),
             (
-                "MERGE alternative-1,alternative-2",
-                AspectAction::Merge(vec![
-                    "alternative-1".to_string(),
-                    "alternative-2".to_string(),
-                ]),
+                "STOP Missing security requirements",
+                AspectAction::Stop("Missing security requirements".to_string()),
             ),
             (
                 "DONE Final result",
@@ -163,9 +122,30 @@ mod tests {
     }
 
     #[test]
-    fn parses_next_without_arguments() {
-        assert!(AspectAction::parse("NEXT").is_ok());
-        assert!(AspectAction::parse("NEXT another aspect").is_err());
+    fn parses_continue_without_arguments() {
+        assert!(AspectAction::parse("CONTINUE").is_ok());
+        assert!(AspectAction::parse("CONTINUE another aspect").is_err());
+    }
+
+    #[test]
+    fn parses_set_stop_and_continue() {
+        assert!(AspectAction::parse("SET Preserve compatibility").is_ok());
+        assert!(AspectAction::parse("STOP Missing security requirements").is_ok());
+        assert!(AspectAction::parse("CONTINUE").is_ok());
+    }
+
+    #[test]
+    fn rejects_legacy_commands() {
+        let legacy = [
+            "NEXT",
+            "ADD-KNOWLEDGE key value",
+            "UPDATE-KNOWLEDGE key value",
+            "MERGE branch",
+        ];
+
+        for line in legacy {
+            assert!(AspectAction::parse(line).is_err(), "'{line}' should fail");
+        }
     }
 
     #[test]
@@ -173,15 +153,13 @@ mod tests {
         let invalid = [
             "",
             " NEXT",
-            "NEXT trailing text",
+            "CONTINUE trailing text",
             "refine lower case",
-            "NEXT\nsecond line",
-            "ADD-KNOWLEDGE key",
-            "UPDATE-KNOWLEDGE invalid/key value",
+            "CONTINUE\nsecond line",
+            "SET",
+            "STOP",
             "FORK branch",
             "JUMP missing argument",
-            "MERGE branch,branch",
-            "MERGE branch,",
             "DONE",
             "{\"actions\":[]}",
         ];

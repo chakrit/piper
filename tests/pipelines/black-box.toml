@@ -1,0 +1,22 @@
+[llm]
+invocation = "${PIPER_TEST_LLM_INVOCATION}"
+system_prompt = "You are a deterministic Piper test worker."
+default_model = "${PIPER_DEFAULT_MODEL}"
+
+[pipelines.black-box]
+max_turns = 8
+
+[[pipelines.black-box.aspects]]
+id = "collect"
+name = "Collect Knowledge"
+prompt = "Set one durable contribution, then continue once it is visible."
+
+[[pipelines.black-box.aspects]]
+id = "branch"
+name = "Branch Work"
+prompt = "Fork once, then continue after the completed fork is visible."
+
+[[pipelines.black-box.aspects]]
+id = "finish"
+name = "Finish"
+prompt = "Finish with the accumulated Corpus."

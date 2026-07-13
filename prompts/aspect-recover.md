@@ -6,12 +6,11 @@ command. Convert it into exactly one valid command line and preserve its intende
 The required shape is:
 
 ```text
-NEXT
-ADD-KNOWLEDGE key durable constraint
-UPDATE-KNOWLEDGE key corrected constraint
+SET durable constraint
+CONTINUE
 JUMP aspect-id
 FORK fork-id branch directive
-MERGE fork-id,other-fork-id
+STOP blocked reason
 DONE final result
 ```
 

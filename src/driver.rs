@@ -1,15 +1,22 @@
 use crate::dsl::AspectAction;
 use crate::llm::LlmClient;
 use crate::models::AspectType;
-use crate::state::{PipelineState, SessionContext};
+use crate::state::{CompletedFork, PipelineState, SessionContext};
 use anyhow::{Context, Result};
 use dialoguer::Select;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 pub struct Driver<C: LlmClient> {
     client: C,
     prompt_dir: PathBuf,
+}
+
+struct RunOutcome {
+    results: Vec<String>,
+    corpus: HashMap<String, String>,
+    stopped: bool,
 }
 
 impl<C: LlmClient> Driver<C> {
@@ -27,13 +34,21 @@ impl<C: LlmClient> Driver<C> {
         knowledge.sort_unstable_by_key(|(key, _)| *key);
         let knowledge = knowledge
             .into_iter()
-            .map(|(key, value)| format!("KNOWLEDGE {key} {value}"));
+            .map(|(_, value)| format!("KNOWLEDGE {value}"));
         let jump_points = state
             .aspects
             .iter()
             .map(|aspect| format!("ASPECT {}", aspect.id));
+        let fork_history = state
+            .completed_forks
+            .iter()
+            .map(|fork| format!("FORK {} {}", fork.id, fork.prompt));
 
-        knowledge.chain(jump_points).collect::<Vec<_>>().join("\n")
+        knowledge
+            .chain(jump_points)
+            .chain(fork_history)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn handle_gate(&self, state: &mut PipelineState) -> Result<bool> {
@@ -53,7 +68,12 @@ impl<C: LlmClient> Driver<C> {
         }
     }
 
-    pub fn run(&self, ctx: &mut SessionContext, mut state: PipelineState) -> Result<Vec<String>> {
+    pub fn run(&self, ctx: &mut SessionContext, state: PipelineState) -> Result<Vec<String>> {
+        let outcome = self.run_inner(ctx, state)?;
+        Ok(outcome.results)
+    }
+
+    fn run_inner(&self, ctx: &mut SessionContext, mut state: PipelineState) -> Result<RunOutcome> {
         let mut all_results = Vec::new();
 
         while state.current_index < state.aspects.len() {
@@ -113,31 +133,18 @@ impl<C: LlmClient> Driver<C> {
                     };
 
                     match action {
-                        AspectAction::Next => {
+                        AspectAction::Set(value) => {
+                            let key = state.contribution_key();
+                            state.corpus.insert(key, value);
+                        }
+                        AspectAction::Continue => {
+                            for fork in state.completed_forks.drain(..) {
+                                state.corpus.extend(fork.corpus);
+                            }
                             state.current_index += 1;
                         }
-                        AspectAction::AddKnowledge { key, value } => {
-                            let key = state.corpus_key(&key);
-                            if state.corpus.contains_key(&key) {
-                                anyhow::bail!(
-                                    "knowledge key '{}' already exists; use UPDATE-KNOWLEDGE",
-                                    key
-                                );
-                            }
-                            state.corpus.insert(key, value);
-                        }
-                        AspectAction::UpdateKnowledge { key, value } => {
-                            let key = state.corpus_key(&key);
-                            if !state.corpus.contains_key(&key) {
-                                anyhow::bail!(
-                                    "knowledge key '{}' does not exist; use ADD-KNOWLEDGE",
-                                    key
-                                );
-                            }
-                            state.corpus.insert(key, value);
-                        }
                         AspectAction::Fork { id, prompt } => {
-                            if ctx.fork_corpora.contains_key(&id) {
+                            if state.completed_forks.iter().any(|fork| fork.id == id) {
                                 anyhow::bail!("fork ID '{}' already exists", id);
                             }
                             let next_index = state.current_index + 1;
@@ -147,9 +154,13 @@ impl<C: LlmClient> Driver<C> {
                                     aspect.id
                                 );
                             }
+                            let mut branch_path = state.branch_path.clone();
+                            branch_path.push(id.clone());
                             let fork_state = PipelineState {
                                 fork_id: Some(id.clone()),
-                                fork_prompt: Some(prompt),
+                                fork_prompt: Some(prompt.clone()),
+                                branch_path,
+                                completed_forks: Vec::new(),
                                 request: state.request.clone(),
                                 goal: state.goal.clone(),
                                 current_index: next_index,
@@ -157,38 +168,63 @@ impl<C: LlmClient> Driver<C> {
                                 corpus: state.corpus.clone(),
                                 max_turns: state.max_turns,
                             };
-                            let fork_results = self.run(ctx, fork_state)?;
-                            all_results.extend(fork_results);
-                        }
-                        AspectAction::Jump(id) => state.jump_to_id(&id)?,
-                        AspectAction::Merge(fork_ids) => {
-                            for fork_id in fork_ids {
-                                let corpus = ctx.fork_corpora.get(&fork_id).with_context(|| {
-                                    format!("fork '{}' has no completed corpus", fork_id)
-                                })?;
-                                state.corpus.extend(corpus.clone());
+                            let fork_outcome = self.run_inner(ctx, fork_state)?;
+                            if fork_outcome.stopped {
+                                return Ok(RunOutcome {
+                                    results: all_results,
+                                    corpus: state.corpus,
+                                    stopped: true,
+                                });
                             }
-                            state.current_index += 1;
+                            state.completed_forks.push(CompletedFork {
+                                id,
+                                prompt,
+                                corpus: fork_outcome.corpus,
+                            });
+                        }
+                        AspectAction::Jump(id) => {
+                            Self::ensure_no_unjoined_forks(&state, "JUMP")?;
+                            state.jump_to_id(&id)?;
+                        }
+                        AspectAction::Stop(reason) => {
+                            Self::ensure_no_unjoined_forks(&state, "STOP")?;
+                            println!("[Driver] LLM stopped the run: {reason}");
+                            return Ok(RunOutcome {
+                                results: all_results,
+                                corpus: state.corpus,
+                                stopped: true,
+                            });
                         }
                         AspectAction::Done(result) => {
+                            Self::ensure_no_unjoined_forks(&state, "DONE")?;
                             println!("[Driver] LLM signaled completion.");
-                            all_results.push(result);
-                            if let Some(fork_id) = &state.fork_id {
-                                ctx.fork_corpora
-                                    .insert(fork_id.clone(), state.corpus.clone());
+                            if state.fork_id.is_none() {
+                                all_results.push(result);
                             }
-                            return Ok(all_results);
+                            return Ok(RunOutcome {
+                                results: all_results,
+                                corpus: state.corpus,
+                                stopped: false,
+                            });
                         }
                     }
                 }
             }
         }
 
-        if let Some(fork_id) = &state.fork_id {
-            ctx.fork_corpora
-                .insert(fork_id.clone(), state.corpus.clone());
+        Ok(RunOutcome {
+            results: all_results,
+            corpus: state.corpus,
+            stopped: false,
+        })
+    }
+
+    fn ensure_no_unjoined_forks(state: &PipelineState, action: &str) -> Result<()> {
+        if !state.completed_forks.is_empty() {
+            anyhow::bail!("{action} cannot discard unjoined fork work; use CONTINUE first");
         }
-        Ok(all_results)
+
+        Ok(())
     }
 }
 
@@ -241,9 +277,9 @@ mod tests {
         std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template").unwrap();
 
         let parent_fork = "FORK f1 Analyze the alternative".to_string();
-        let fork_knowledge = "ADD-KNOWLEDGE tdd-red The behavior needs a failing test.".to_string();
+        let fork_knowledge = "SET The behavior needs a failing test.".to_string();
         let fork_result = "DONE Fork 1 Final".to_string();
-        let parent_merge = "MERGE f1".to_string();
+        let parent_merge = "CONTINUE".to_string();
         let parent_result = "DONE Parent Final".to_string();
 
         let client = MockLlmClient {
@@ -261,6 +297,8 @@ mod tests {
         let state = PipelineState {
             fork_id: None,
             fork_prompt: None,
+            branch_path: Vec::new(),
+            completed_forks: Vec::new(),
             request: "Request".to_string(),
             goal: "Goal".to_string(),
             current_index: 0,
@@ -286,15 +324,7 @@ mod tests {
 
         let results = driver.run(&mut ctx, state).unwrap();
 
-        assert_eq!(results.len(), 2);
-        assert!(results.contains(&"Fork 1 Final".to_string()));
-        assert!(results.contains(&"Parent Final".to_string()));
-        assert_eq!(
-            ctx.fork_corpora
-                .get("f1")
-                .and_then(|corpus| corpus.get("f1/tdd-red")),
-            Some(&"The behavior needs a failing test.".to_string())
-        );
+        assert_eq!(results, vec!["Parent Final"]);
     }
 
     #[test]
@@ -356,7 +386,7 @@ mod tests {
                 prompt: "Prompt".to_string(),
                 model: None,
             }],
-            std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
+            std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
         );
 
         let results = driver
@@ -366,17 +396,19 @@ mod tests {
     }
 
     #[test]
-    fn test_run_rejects_duplicate_knowledge() {
+    fn test_run_set_replaces_current_worker_contribution() {
         let temp_dir = std::env::temp_dir().join("piper_tests_knowledge");
         std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
-        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
+        std::fs::write(temp_dir.join("aspect-worker.md"), "Context:\n{{context}}")
             .expect("worker template should be written");
 
-        let client = MockLlmClient {
+        let client = RecordingMockLlmClient {
             responses: Mutex::new(vec![
-                "ADD-KNOWLEDGE requirement Preserve compatibility".to_string(),
-                "ADD-KNOWLEDGE requirement Preserve compatibility".to_string(),
+                "SET Preserve compatibility".to_string(),
+                "SET Preserve the stable API".to_string(),
+                "DONE Final result".to_string(),
             ]),
+            prompts: Mutex::new(Vec::new()),
         };
         let driver = Driver::new(client, temp_dir);
         let mut ctx = SessionContext::new();
@@ -390,13 +422,25 @@ mod tests {
                 prompt: "Prompt".to_string(),
                 model: None,
             }],
-            std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
+            std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
         );
 
-        let error = driver
-            .run(&mut ctx, state)
-            .expect_err("duplicate knowledge should fail");
-        assert!(error.to_string().contains("use UPDATE-KNOWLEDGE"));
+        let results = driver.run(&mut ctx, state).expect("run should succeed");
+        assert_eq!(results, vec!["Final result"]);
+
+        let prompts = driver
+            .client
+            .prompts
+            .lock()
+            .expect("prompts lock should not be poisoned");
+        assert_eq!(
+            prompts.as_slice(),
+            [
+                "Context:\nASPECT a1",
+                "Context:\nKNOWLEDGE Preserve compatibility\nASPECT a1",
+                "Context:\nKNOWLEDGE Preserve the stable API\nASPECT a1",
+            ]
+        );
     }
 
     #[test]
@@ -411,8 +455,8 @@ mod tests {
 
         let client = RecordingMockLlmClient {
             responses: Mutex::new(vec![
-                "ADD-KNOWLEDGE requirement Preserve compatibility".to_string(),
-                "UPDATE-KNOWLEDGE requirement Preserve the stable API".to_string(),
+                "SET Preserve compatibility".to_string(),
+                "SET Preserve the stable API".to_string(),
                 "DONE Final result".to_string(),
             ]),
             prompts: Mutex::new(Vec::new()),
@@ -453,9 +497,82 @@ mod tests {
             prompts.as_slice(),
             [
                 "Request: Keep this request intact\nContext:\nASPECT a1\nASPECT a2",
-                "Request: Keep this request intact\nContext:\nKNOWLEDGE requirement Preserve compatibility\nASPECT a1\nASPECT a2",
-                "Request: Keep this request intact\nContext:\nKNOWLEDGE requirement Preserve the stable API\nASPECT a1\nASPECT a2",
+                "Request: Keep this request intact\nContext:\nKNOWLEDGE Preserve compatibility\nASPECT a1\nASPECT a2",
+                "Request: Keep this request intact\nContext:\nKNOWLEDGE Preserve the stable API\nASPECT a1\nASPECT a2",
             ]
         );
+    }
+
+    #[test]
+    fn test_run_stop_returns_no_final_result() {
+        let temp_dir = std::env::temp_dir().join("piper_tests_stop");
+        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
+        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
+            .expect("worker template should be written");
+
+        let client = MockLlmClient {
+            responses: Mutex::new(vec!["STOP Missing requirements".to_string()]),
+        };
+        let driver = Driver::new(client, temp_dir);
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Initial".to_string(),
+            "Goal".to_string(),
+            vec![Aspect {
+                id: "a1".to_string(),
+                name: "Aspect 1".to_string(),
+                aspect_type: AspectType::Worker,
+                prompt: "Prompt".to_string(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
+        );
+
+        let results = driver.run(&mut ctx, state).expect("stop should be clean");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_done_rejects_unjoined_fork_work() {
+        let temp_dir = std::env::temp_dir().join("piper_tests_unjoined_fork");
+        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
+        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
+            .expect("worker template should be written");
+
+        let client = MockLlmClient {
+            responses: Mutex::new(vec![
+                "FORK f1 Analyze the alternative".to_string(),
+                "DONE Child complete".to_string(),
+                "DONE Parent complete".to_string(),
+            ]),
+        };
+        let driver = Driver::new(client, temp_dir);
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Initial".to_string(),
+            "Goal".to_string(),
+            vec![
+                Aspect {
+                    id: "a1".to_string(),
+                    name: "Aspect 1".to_string(),
+                    aspect_type: AspectType::Worker,
+                    prompt: "Prompt".to_string(),
+                    model: None,
+                },
+                Aspect {
+                    id: "a2".to_string(),
+                    name: "Aspect 2".to_string(),
+                    aspect_type: AspectType::Worker,
+                    prompt: "Prompt".to_string(),
+                    model: None,
+                },
+            ],
+            std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
+        );
+
+        let error = driver
+            .run(&mut ctx, state)
+            .expect_err("DONE with unjoined fork work should fail");
+        assert!(error.to_string().contains("use CONTINUE first"));
     }
 }

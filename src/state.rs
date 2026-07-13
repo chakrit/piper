@@ -4,16 +4,12 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 pub struct SessionContext {
-    pub fork_corpora: HashMap<String, HashMap<String, String>>,
     turns_taken: usize,
 }
 
 impl SessionContext {
     pub fn new() -> Self {
-        Self {
-            fork_corpora: HashMap::new(),
-            turns_taken: 0,
-        }
+        Self { turns_taken: 0 }
     }
 
     pub fn consume_turn(&mut self, max_turns: NonZeroUsize) -> Result<()> {
@@ -26,9 +22,17 @@ impl SessionContext {
     }
 }
 
+pub struct CompletedFork {
+    pub id: String,
+    pub prompt: String,
+    pub corpus: HashMap<String, String>,
+}
+
 pub struct PipelineState {
     pub fork_id: Option<String>,
     pub fork_prompt: Option<String>,
+    pub branch_path: Vec<String>,
+    pub completed_forks: Vec<CompletedFork>,
     pub request: String,
     pub goal: String,
     pub current_index: usize,
@@ -47,6 +51,8 @@ impl PipelineState {
         Self {
             fork_id: None,
             fork_prompt: None,
+            branch_path: Vec::new(),
+            completed_forks: Vec::new(),
             request,
             goal,
             current_index: 0,
@@ -56,11 +62,13 @@ impl PipelineState {
         }
     }
 
-    pub fn corpus_key(&self, key: &str) -> String {
-        self.fork_id
-            .as_ref()
-            .map(|fork_id| format!("{fork_id}/{key}"))
-            .unwrap_or_else(|| key.to_string())
+    pub fn contribution_key(&self) -> String {
+        let aspect_id = &self.current_aspect().id;
+        if self.branch_path.is_empty() {
+            return aspect_id.to_string();
+        }
+
+        format!("{}/{}", self.branch_path.join("/"), aspect_id)
     }
 
     pub fn current_aspect(&self) -> &Aspect {

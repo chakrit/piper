@@ -50,7 +50,7 @@ call using `aspect-recover.md`. A recovery response that is still invalid fails 
 ## Pipeline configuration
 
 Pipelines live in TOML. `max_turns` is optional and defaults to `100`; it must be at least
-one. Aspect files use `type`, not `aspect_type`.
+one. Aspects default to `worker`; set `type = "gate"` only for gate Aspects.
 
 ```toml
 [llm]
@@ -64,7 +64,6 @@ max_turns = 50
 [[pipelines.rigour.aspects]]
 id = "spec-align"
 name = "Spec Alignment"
-type = "worker"
 prompt = "Record requirements that must be met."
 model = "optional-model-override"
 

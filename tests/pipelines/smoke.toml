@@ -1,8 +1,8 @@
 # Minimal end-to-end configuration for validating Piper against a real Worker Lens.
 [llm]
-invocation = "opencode run -m {{model}} {{prompt}}"
+invocation = "${PIPER_LLM_INVOCATION}"
 system_prompt = "You are a precise Piper Worker Lens. Follow the supplied action protocol exactly."
-default_model = "cerebras/gemma-4-31b"
+default_model = "${PIPER_DEFAULT_MODEL}"
 
 [pipelines.smoke]
 max_turns = 1
@@ -10,5 +10,4 @@ max_turns = 1
 [[pipelines.smoke.aspects]]
 id = "smoke"
 name = "Smoke Test"
-type = "worker"
 prompt = "Return exactly this one line: DONE Piper smoke test passed."

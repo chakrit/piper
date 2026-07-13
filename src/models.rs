@@ -21,7 +21,7 @@ impl AspectType {
 pub struct Aspect {
     pub id: String,
     pub name: String,
-    #[serde(rename = "type")]
+    #[serde(default, rename = "type")]
     pub aspect_type: AspectType,
     pub prompt: String,
     pub model: Option<String>,

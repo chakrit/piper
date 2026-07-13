@@ -17,7 +17,7 @@ Piper is a context-engineering engine for clarifying a Request through modular A
 - `src/`: Rust source code for the driver.
 - `piper.toml`: Pipeline definitions (Aspect sequences and turn limits).
 - `prompts/`: Aspect lens templates.
-- `pipelines/`: Reusable pipeline configurations.
+- `tests/pipelines/`: Checked-in pipeline fixtures and example configurations.
 - `docs/`: Design specifications, decisions, and guides.
 
 ## Getting Started
@@ -30,14 +30,14 @@ Piper is a context-engineering engine for clarifying a Request through modular A
 Build the tool and run the checked-in smoke pipeline:
 
 ```bash
-cargo run -- --file pipelines/smoke.toml run smoke \
+cargo run -- --file tests/pipelines/smoke.toml run smoke \
   --goal "Verify the Piper driver" --request "Confirm the Worker protocol."
 ```
 
 `piper.toml` defines named pipelines. Each pipeline has an ordered `aspects` list and an
 optional `max_turns` limit (default: 100) shared by the root run and every fork. See
 [`docs/spec/aop-engine.md`](docs/spec/aop-engine.md) for the configuration and action
-protocol. The tracked [`self-evolve` pipeline](pipelines/self-evolve.toml)
+protocol. The tracked [`self-evolve` pipeline](tests/pipelines/self-evolve.toml)
 distills `ultra-engineer.md` into a bounded, fork-aware self-improvement loop.
 
 ## License

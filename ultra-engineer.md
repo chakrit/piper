@@ -1,6 +1,6 @@
 # Ultra-Engineer Pipeline Design
 
-- **Status:** implemented as [`pipelines/self-evolve.toml`](pipelines/self-evolve.toml)
+- **Status:** implemented as [`tests/pipelines/self-evolve.toml`](tests/pipelines/self-evolve.toml)
 - **Scope:** A bounded, fork-aware workflow for planning and auditing Piper's own evolution.
 
 The TOML pipeline is the executable source of truth. Each Aspect emits one DSL command;

@@ -13,9 +13,10 @@
 **Authoritative DSL Context**:
 {{context}}
 
-Each `KNOWLEDGE key value` directive is a durable constraint. Each `ASPECT id` directive
-is a valid target for `JUMP`. Treat these directives as authoritative; strongly prefer
-using them directly rather than inferring alternatives.
+Each `KNOWLEDGE value` directive is a durable constraint. Each `ASPECT id` directive
+is a valid target for `JUMP`. Each `FORK id directive` directive is a completed fork
+launched by this Worker and not yet joined. Treat these directives as authoritative;
+strongly prefer using them directly rather than inferring alternatives.
 
 **Task**:
 Analyze the immutable Request through the current Aspect and contribute durable knowledge to the Corpus.
@@ -31,20 +32,19 @@ second line. A final newline is allowed.
 **Commands**:
 
 ```text
-NEXT
-ADD-KNOWLEDGE key durable constraint
-UPDATE-KNOWLEDGE key corrected constraint
+SET durable constraint
+CONTINUE
 JUMP aspect-id
 FORK fork-id branch directive
-MERGE fork-id,other-fork-id
+STOP blocked reason
 DONE final result
 ```
 
-- `NEXT` advances to the next Aspect without changing the Request.
-- `ADD-KNOWLEDGE` adds a new key; `UPDATE-KNOWLEDGE` requires an existing key. Both re-run this Aspect so a later command can use the updated corpus.
+- `SET` records or replaces this Worker's one durable contribution, then re-runs this Aspect.
+- `CONTINUE` advances to the next Aspect. If completed forks are listed, it first joins all of their Corpora and clears this Worker's fork history.
 - `JUMP` transfers control only to an ID listed by an `ASPECT` directive.
-- `FORK` starts a child at the next Aspect with the same Request, Goal, and Corpus, then re-runs this Aspect so it can create more branches or merge them.
-- `MERGE` incorporates completed fork Corpus entries, then advances.
+- `FORK` starts a child at the next Aspect with the same Request, Goal, and Corpus, then re-runs this Aspect after the child completes.
+- `STOP` cleanly stops the entire run without a final Result.
 - `DONE` returns its text argument as the final Result.
 
-IDs and keys use only ASCII letters, digits, hyphens, and underscores. Text arguments are the remainder of the line. Fork-owned knowledge is namespaced as `fork-id/key`.
+IDs use only ASCII letters, digits, hyphens, and underscores. Text arguments are the remainder of the line.

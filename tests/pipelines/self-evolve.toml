@@ -1,0 +1,60 @@
+# Copy this file to piper.toml or select it with:
+# cargo run -- --file tests/pipelines/self-evolve.toml run self-evolve ...
+[llm]
+invocation = "${PIPER_LLM_INVOCATION}"
+system_prompt = "You are a highly capable AI assistant."
+default_model = "${PIPER_DEFAULT_MODEL}"
+
+[pipelines.self-evolve]
+# Shared by the root pipeline and every work-stream fork.
+max_turns = 48
+
+[[pipelines.self-evolve.aspects]]
+id = "clarify"
+name = "Clarify the Change"
+prompt = "Analyze the Request against the specifications. Use SET to record the consolidated criteria needed by later Aspects, then rerun. If a material choice cannot be resolved, return STOP followed by the blocker. When the necessary criteria are in the Corpus, return CONTINUE."
+
+[[pipelines.self-evolve.aspects]]
+id = "distill"
+name = "Distill Work Streams"
+prompt = "Identify independent work streams from the Request and Corpus. For each independent branch, return FORK with a unique ID and concise directive; this Aspect reruns after that child completes. Once every branch is complete, return CONTINUE to join completed forks. For one stream, return CONTINUE."
+
+[[pipelines.self-evolve.aspects]]
+id = "architect"
+name = "Architecture and Abstraction"
+prompt = "Assess the repository design and specifications for a simpler, more reliable abstraction. Use SET to record the consolidated architecture finding, then rerun. When the architecture finding is complete, return CONTINUE."
+
+[[pipelines.self-evolve.aspects]]
+id = "restructure"
+name = "Restructure Before Feature Work"
+prompt = "Describe the smallest safe refactor that makes the Request straightforward, including affected boundaries and preserved behavior. Use SET to record the consolidated plan, then rerun. When the plan is complete, return CONTINUE."
+
+[[pipelines.self-evolve.aspects]]
+id = "test-plan"
+name = "Test Plan"
+prompt = "Define the narrow failing test, key edge cases, and broad verification command. For untestable documentation or configuration changes, record the substitute verification. Use SET to record the consolidated test plan, then rerun; return CONTINUE when complete."
+
+[[pipelines.self-evolve.aspects]]
+id = "tdd-red"
+name = "TDD Red"
+prompt = "Specify the smallest test slice that should fail for the missing behavior. Reject compile-only failures and tautological assertions. Use SET to record the red test and expected failure, then rerun; return CONTINUE when complete."
+
+[[pipelines.self-evolve.aspects]]
+id = "tdd-green"
+name = "TDD Green"
+prompt = "Identify the smallest implementation change that satisfies the red test and no more. Use SET to record implementation evidence, then rerun; return CONTINUE when complete."
+
+[[pipelines.self-evolve.aspects]]
+id = "tdd-refactor"
+name = "TDD Refactor"
+prompt = "Identify improvements to naming, boundaries, and duplication that preserve behavior. Use SET to record only necessary cleanup, then rerun; return CONTINUE when complete."
+
+[[pipelines.self-evolve.aspects]]
+id = "completion-check"
+name = "Completion Check"
+prompt = "Decide whether every accepted requirement and planned test is covered. If anything is missing, return JUMP tdd-red. If complete, return JUMP audit."
+
+[[pipelines.self-evolve.aspects]]
+id = "audit"
+name = "Alignment Audit"
+prompt = "Audit the Request against the Corpus, accepted specs, test plan, and engineering constraints. Categorize findings as violation, borderline, or out of scope. For a violation, use SET to record the corrective next step, then rerun and JUMP architect. Otherwise return DONE with a concise completion report."

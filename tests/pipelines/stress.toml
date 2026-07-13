@@ -1,22 +1,19 @@
 [llm]
-invocation = "opencode run -m cerebras/gemma-4-31b {{prompt}}"
+invocation = "${PIPER_LLM_INVOCATION}"
 system_prompt = "You are a precise AOP worker."
-default_model = "cerebras/gemma-4-31b"
+default_model = "${PIPER_DEFAULT_MODEL}"
 
 [[pipelines.stress.aspects]]
 id = "start"
 name = "Start Aspect"
-type = "worker"
 prompt = "Return exactly this one line: JUMP end"
 
 [[pipelines.stress.aspects]]
 id = "middle"
 name = "Middle Aspect"
-type = "worker"
 prompt = "You should not be seen."
 
 [[pipelines.stress.aspects]]
 id = "end"
 name = "End Aspect"
-type = "worker"
 prompt = "Return exactly this one line: DONE Jumped"

@@ -3,6 +3,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+.env.local
 .vscode/
 .idea/
 
@@ -26,7 +27,6 @@ ace.local.toml
 
 # Added by cargo
 /target
-piper.toml
 
 # Python
 __pycache__/

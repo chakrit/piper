@@ -2,7 +2,7 @@
 
 Piper is a standalone Rust CLI for context-engineering pipelines. It applies ordered
 Aspect Workers to an immutable Request and Goal, accumulates Knowledge in a shared Corpus,
-and supports routing, isolated forks, merges, human gates, bounded execution, and explicit
+and supports routing, isolated forks, human gates, bounded execution, and explicit
 completion.
 
 ## Repository shape
@@ -15,7 +15,10 @@ completion.
 - `src/llm.rs`: external LLM command invocation.
 - `src/actions/`: filesystem reads and mutations.
 - `prompts/`: runtime Worker templates.
-- `pipelines/`: checked-in pipeline configurations.
+- `piper.toml`: committed self-dogfooding pipeline for developing Piper itself.
+- `.env`: committed non-production defaults for clone-and-run development.
+- `tests/pipelines/`: checked-in pipeline fixtures and example configurations.
+- `tests/cli.rs`: black-box CLI coverage that runs the compiled binary.
 
 ## Verification
 
@@ -27,12 +30,24 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-The crate uses `#![deny(warnings)]`. Tests are colocated with the Rust modules they cover.
+The crate uses `#![deny(warnings)]`. Keep focused module tests colocated with the Rust
+modules they cover, and put black-box CLI behavior tests under `tests/`.
 
 ## Conventions
 
-- Keep the Request immutable; Workers add or update Knowledge in the Corpus.
+- Keep the Request immutable; Workers contribute Knowledge to the Corpus with `SET`.
 - Worker output is exactly one DSL command on one non-empty line.
+- Current Worker DSL: `SET`, `CONTINUE`, `JUMP`, `FORK`, `STOP`, `DONE`.
+- `SET` replaces the current Worker's own contribution for the current branch/aspect.
+- `CONTINUE` advances and joins any completed forks launched by the current Worker.
+- Aspects default to `worker`; only gate aspects need `type = "gate"` in TOML.
+- `piper.toml` is the real dogfooding config, not a test fixture.
+- Purpose-built test pipelines live under `tests/pipelines/`; do not use repo-root
+  `piper.toml` as a fixture.
+- Config TOML may interpolate `${VAR}` from the process environment, `.env`, and
+  `.env.local`. Load order is `.env`, then `.env.local`, then process environment.
+- `.env` is committed for working non-production defaults; `.env.local` is gitignored for
+  personal overrides. Do not add `.env.example`.
 - The root run and all forks share one global turn budget.
 - Keep filesystem access behind actions in `src/actions/`.
 - Use short, imperative commit subjects, consistent with recent history.
