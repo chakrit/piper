@@ -17,8 +17,7 @@ The normal transition is:
 
 ## Core concepts
 
-- **Request** — immutable original user input.
-- **Goal** — desired outcome for the run.
+- **Request** — immutable original user input, including the desired outcome.
 - **Aspect** — a named perspective or question applied to the Request.
 - **Worker** — the LLM-run stage that applies one Aspect.
 - **Corpus** — durable knowledge contributed by Workers and fed to later Workers.
@@ -30,7 +29,7 @@ that set it. Workers never supply arbitrary knowledge keys.
 
 ## State and execution
 
-`PipelineState` contains the Request, Goal, ordered Aspects, current position, Corpus,
+`PipelineState` contains the Request, ordered Aspects, current position, Corpus,
 current branch scope, optional fork directive, and a non-zero turn limit. A
 `SessionContext` is shared by the root pipeline and every fork and tracks the total number
 of Worker calls.
@@ -78,12 +77,13 @@ type = "gate"
 prompt = ""
 ```
 
-The `run` command accepts a pipeline TOML path, `--goal`, `--request`, and an optional
-`--prompts` directory. Its default prompt directory is `prompts`. `--file` selects the
-shared configuration file and defaults to `piper.toml`. For example:
+The `run` command accepts a pipeline TOML path followed by the immutable Request and an
+optional `--prompts` directory. The Request includes the desired outcome rather than
+splitting it into a separate Goal field. Its default prompt directory is `prompts`.
+`--file` selects the shared configuration file and defaults to `piper.toml`. For example:
 
 ```text
-piper --file piper.toml run pipeline.toml --goal "..." --request "..."
+piper --file piper.toml run pipeline.toml "Review this change for security regressions."
 ```
 
 ## Worker DSL
@@ -109,7 +109,7 @@ DONE Final readiness assessment.
 | `CONTINUE` | none | Alias of `JOIN`. Joins any completed child Corpora first. In the root run, advances to the next Aspect; in a fork, returns the branch Corpus to its parent. |
 | `JOIN` | none | Alias of `CONTINUE`. Joins any completed child Corpora first. In the root run, advances to the next Aspect; in a fork, returns the branch Corpus to its parent. |
 | `JUMP` | `<aspect-id>` | Transfers control to an `ASPECT` target. It is invalid while the current Worker has unjoined forks. |
-| `FORK` | `<fork-id> <directive>` | Runs an isolated child from the next Aspect with the same Request, Goal, and starting Corpus. The child completes before the parent Worker runs again. |
+| `FORK` | `<fork-id> <directive>` | Runs an isolated child from the next Aspect with the same Request and starting Corpus. The child completes before the parent Worker runs again. |
 | `STOP` | `<reason>` | Stops the entire run cleanly without a final Result. A child `STOP` stops its parent run as well. |
 | `DONE` | `<result>` | Returns a final Result immediately. It is invalid while the current Worker has unjoined forks. |
 
@@ -163,7 +163,7 @@ merges are deliberately deferred until there is a concrete need for them.
 
 | Template | Role | Variables |
 | --- | --- | --- |
-| `aspect-worker.md` | Worker request | `aspect_name`, `aspect_id`, `aspect_prompt`, `request`, `goal`, `fork_prompt`, `context` |
+| `aspect-worker.md` | Worker request | `aspect_name`, `aspect_id`, `aspect_prompt`, `request`, `fork_prompt`, `context` |
 | `aspect-recover.md` | One-shot formatter recovery | The rejected raw response is appended by the driver. |
 
 ## Implementation note

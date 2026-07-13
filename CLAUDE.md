@@ -1,7 +1,7 @@
 # Piper
 
 Piper is a standalone Rust CLI for context-engineering pipelines. It applies ordered
-Aspect Workers to an immutable Request and Goal, accumulates Knowledge in a shared Corpus,
+Aspect Workers to an immutable Request, accumulates Knowledge in a shared Corpus,
 and supports routing, isolated forks, human gates, bounded execution, and explicit
 completion.
 

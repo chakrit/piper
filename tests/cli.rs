@@ -121,16 +121,7 @@ fn run_pipeline(pipeline: &str, request: &str) -> std::process::Output {
     let llm = write_test_llm(temp_dir.path());
 
     Command::new(env!("CARGO_BIN_EXE_piper"))
-        .args([
-            "--file",
-            "piper.toml",
-            "run",
-            pipeline,
-            "--goal",
-            "Exercise knowledge flow",
-            "--request",
-            request,
-        ])
+        .args(["--file", "piper.toml", "run", pipeline, request])
         .env(
             "PIPER_LLM_INVOCATION",
             format!("{} {{{{prompt}}}}", llm.display()),
@@ -159,9 +150,6 @@ fn cli_runs_pipeline_incrementally() {
             "piper.toml",
             "run",
             "tests/pipelines/black-box.toml",
-            "--goal",
-            "Exercise the CLI",
-            "--request",
             "Run the black-box pipeline",
         ])
         .env(

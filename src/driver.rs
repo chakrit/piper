@@ -109,7 +109,6 @@ impl<C: LlmClient> Driver<C> {
                         .replace("{{aspect_prompt}}", &aspect.prompt)
                         .replace("{{aspect_id}}", &aspect.id)
                         .replace("{{request}}", &state.request)
-                        .replace("{{goal}}", &state.goal)
                         .replace(
                             "{{fork_prompt}}",
                             state.fork_prompt.as_deref().unwrap_or(""),
@@ -169,7 +168,6 @@ impl<C: LlmClient> Driver<C> {
                                 branch_path,
                                 completed_forks: Vec::new(),
                                 request: state.request.clone(),
-                                goal: state.goal.clone(),
                                 current_index: next_index,
                                 aspects: state.aspects.clone(),
                                 corpus: state.corpus.clone(),
@@ -307,7 +305,6 @@ mod tests {
             branch_path: Vec::new(),
             completed_forks: Vec::new(),
             request: "Request".to_string(),
-            goal: "Goal".to_string(),
             current_index: 0,
             aspects: vec![
                 Aspect {
@@ -357,7 +354,6 @@ mod tests {
         let mut ctx = SessionContext::new();
         let state = PipelineState::new(
             "Write a short story".to_string(),
-            "Use every generated character".to_string(),
             vec![
                 Aspect {
                     id: "branch".to_string(),
@@ -409,7 +405,6 @@ mod tests {
         let mut ctx = SessionContext::new();
         let state = PipelineState::new(
             "Initial".to_string(),
-            "Goal".to_string(),
             vec![Aspect {
                 id: "a1".to_string(),
                 name: "Aspect 1".to_string(),
@@ -444,7 +439,6 @@ mod tests {
         let mut ctx = SessionContext::new();
         let state = PipelineState::new(
             "Initial".to_string(),
-            "Goal".to_string(),
             vec![Aspect {
                 id: "a1".to_string(),
                 name: "Aspect 1".to_string(),
@@ -480,7 +474,6 @@ mod tests {
         let mut ctx = SessionContext::new();
         let state = PipelineState::new(
             "Initial".to_string(),
-            "Goal".to_string(),
             vec![Aspect {
                 id: "a1".to_string(),
                 name: "Aspect 1".to_string(),
@@ -531,7 +524,6 @@ mod tests {
         let mut ctx = SessionContext::new();
         let state = PipelineState::new(
             "Keep this request intact".to_string(),
-            "Goal".to_string(),
             vec![
                 Aspect {
                     id: "a1".to_string(),
@@ -583,7 +575,6 @@ mod tests {
         let mut ctx = SessionContext::new();
         let state = PipelineState::new(
             "Initial".to_string(),
-            "Goal".to_string(),
             vec![Aspect {
                 id: "a1".to_string(),
                 name: "Aspect 1".to_string(),
@@ -616,7 +607,6 @@ mod tests {
         let mut ctx = SessionContext::new();
         let state = PipelineState::new(
             "Initial".to_string(),
-            "Goal".to_string(),
             vec![
                 Aspect {
                     id: "a1".to_string(),

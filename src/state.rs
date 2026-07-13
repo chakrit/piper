@@ -34,7 +34,6 @@ pub struct PipelineState {
     pub branch_path: Vec<String>,
     pub completed_forks: Vec<CompletedFork>,
     pub request: String,
-    pub goal: String,
     pub current_index: usize,
     pub aspects: Vec<Aspect>,
     pub corpus: HashMap<String, String>,
@@ -42,19 +41,13 @@ pub struct PipelineState {
 }
 
 impl PipelineState {
-    pub fn new(
-        request: String,
-        goal: String,
-        aspects: Vec<Aspect>,
-        max_turns: NonZeroUsize,
-    ) -> Self {
+    pub fn new(request: String, aspects: Vec<Aspect>, max_turns: NonZeroUsize) -> Self {
         Self {
             fork_id: None,
             fork_prompt: None,
             branch_path: Vec::new(),
             completed_forks: Vec::new(),
             request,
-            goal,
             current_index: 0,
             aspects,
             corpus: HashMap::new(),

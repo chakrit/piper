@@ -40,7 +40,7 @@ Order Aspects so dependent analysis follows the knowledge it needs:
 
 ## Design workflow
 
-1. **Request and goal**: State the immutable Request and desired Goal separately.
+1. **Request**: State the desired outcome and immutable input together as one Request.
 2. **Constraint extraction**: Identify the durable facts and decisions later Aspects need.
 3. **Aspect design**: Give each Aspect one question or concern and order them by dependency.
 4. **Fork design**: Add a fork only for genuinely independent exploration. Give each branch

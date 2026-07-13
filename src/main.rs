@@ -35,12 +35,7 @@ enum Commands {
         /// TOML file containing the pipeline to run
         pipeline_file: PathBuf,
 
-        /// The original goal/objective
-        #[arg(short, long)]
-        goal: String,
-
-        /// The immutable request to analyze
-        #[arg(short, long)]
+        /// The immutable request to analyze, including its desired outcome
         request: String,
 
         /// Directory containing prompt templates
@@ -68,7 +63,6 @@ fn main() -> Result<()> {
         }
         Commands::Run {
             pipeline_file,
-            goal,
             request,
             prompts,
         } => {
@@ -76,7 +70,7 @@ fn main() -> Result<()> {
             let pipeline = config.load_pipeline(&ctx, pipeline_file)?;
             let pipeline = config.resolve_pipeline(&ctx, &pipeline)?;
 
-            let state = PipelineState::new(request, goal, pipeline.aspects, pipeline.max_turns);
+            let state = PipelineState::new(request, pipeline.aspects, pipeline.max_turns);
             let mut ctx = state::SessionContext::new();
 
             let client = llm::ConfigurableLlmClient {
