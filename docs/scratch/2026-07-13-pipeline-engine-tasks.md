@@ -4,12 +4,14 @@
 
 ## Resume state
 
-- Branch: `main`, ahead of `gh/main` by five commits before the recovery-budget slice.
+- Branch: `main`, ahead of `gh/main` by seven commits before this checkpoint.
 - Committed `37074a7 define join alias to simplify branch completion`.
 - Committed `65db0e4 exercise corpus flow through fork joins`.
 - Committed `e32a9da fold desired outcome into the request`.
 - Committed `c43846a explain Piper as a deterministic anti-harness`.
 - Committed `ae663fd track engine hardening work across sessions`.
+- Committed `6a62b26 bound formatter recovery across the whole run`.
+- Committed `347ec01 keep fork work inside its launching aspect`.
 - Gemma/OpenCode token spend during this session: 0. All pipeline tests used local,
   deterministic Workers.
 
@@ -43,10 +45,6 @@
 4. Expand recovery acceptance coverage beyond the committed shared-budget test: successful
    one-shot recovery through the CLI, preserved Corpus during recovery, malformed recovery
    failure, and recovery inside a fork.
-5. Change forks to execute the same Aspect that launched them. Add `CONTEXT
-   <aspect-id>/<fork-path...>`, explicit parent/fork instructions, and correlated
-   `FORK_KNOWLEDGE` in the parent prompt. Prove sibling isolation, parent-side synthesis,
-   nested context paths, and downstream joined Corpus with deterministic pipelines.
 
 ## Verification state
 
@@ -54,7 +52,7 @@ After the recovery-budget implementation, these passed:
 
 - `cargo fmt --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test` (26 unit tests and 6 CLI tests)
+- `cargo test` (27 unit tests and 6 CLI tests)
 - ShellCheck over the embedded deterministic Bash Worker in `tests/cli.rs`
 
 Rerun all checks before each code commit.
