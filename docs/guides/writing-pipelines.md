@@ -94,9 +94,10 @@ Every Worker response must be exactly one non-empty command line.
 - `JOIN` is an exact alias of `CONTINUE`. It has no distinct merge mode or timing.
 - `JUMP <aspect-id>` revisits or skips to an Aspect listed in the runtime `ASPECT`
   directives. It cannot discard unjoined fork work.
-- `FORK <fork-id> <directive>` runs an isolated child at the next Aspect. The parent runs
-  again after the child returns and sees a completed-fork directive, while the child's
-  knowledge remains isolated until the parent continues or joins.
+- `FORK <fork-id> <directive>` runs an isolated child on the current Aspect. The child sees
+  the parent instruction, its narrower fork instruction, and a `CONTEXT` path. The parent
+  runs again after the child returns and sees correlated `FORK_KNOWLEDGE`, while that
+  knowledge remains pending until the parent continues or joins.
 - `STOP <reason>` cleanly stops the entire run without a final Result. A child stop also
   stops its parent run.
 - `DONE <result>` immediately returns the final Result. Use it for synthesis, not for
@@ -152,12 +153,15 @@ These are three successive Worker responses, not a multiline response. See
 Use forks for independent work whose results should meet at a later Aspect:
 
 1. The parent emits one `FORK` per independent directive.
-2. Each child starts at the next Aspect with a copy of the parent's starting Corpus.
+2. Each child runs the current Aspect with a copy of the parent's starting Corpus and a
+   narrower fork instruction.
 3. Each child uses `SET`, then returns with either `CONTINUE` or `JOIN`.
-4. The parent runs again after each child. It sees `FORK` history but not child knowledge.
-5. The parent emits `CONTINUE` or `JOIN`; Piper joins every completed child Corpus and
+4. The parent runs again after each child. It sees `FORK` history and correlated pending
+   results as `FORK_KNOWLEDGE`, but siblings do not see one another's results.
+5. The parent may use `SET` to consolidate the pending results inside the same Aspect.
+6. The parent emits `CONTINUE` or `JOIN`; Piper joins every completed child Corpus and
    advances.
-6. The synthesis Aspect receives all joined contributions as `KNOWLEDGE`.
+7. Later Aspects receive all joined contributions as ordinary `KNOWLEDGE`.
 
 ```text
 FORK term-a calculate seven
@@ -167,9 +171,10 @@ JOIN
 ```
 
 Those are successive responses from the parent. Child contributions remain isolated from
-one another and from the parent until the parent joins them. This makes fan-out behavior
-easy to test: the synthesis prompt should contain every term, while pre-join parent prompts
-should contain none of them. See
+one another, while the parent can inspect each completed result through correlated
+`FORK_KNOWLEDGE`. This makes fan-out behavior easy to test: siblings must not receive one
+another's terms, the parent must receive every pending term, and later Aspects must receive
+them as joined `KNOWLEDGE`. See
 [`parallel-arithmetic.toml`](../../tests/pipelines/parallel-arithmetic.toml) and
 [`fantasy-characters.toml`](../../tests/pipelines/fantasy-characters.toml).
 
@@ -262,8 +267,9 @@ cargo test
 - **A replacement leaves stale knowledge:** replacement is scoped to the same branch and
   Aspect. Two different Aspects or two forks create distinct contributions even when their
   text looks related.
-- **Fork results do not reach synthesis:** a child must return with `CONTINUE` or `JOIN`,
-  and the parent must later do the same to join all completed children before advancing.
+- **Fork results do not reach later Aspects:** a child must return with `CONTINUE` or
+  `JOIN`, and the parent must later do the same to make all pending results durable before
+  advancing.
 - **A child does not return its knowledge:** `DONE` is not a branch-return command. Use
   `CONTINUE` or `JOIN` in a child so its Corpus returns to the parent.
 - **`JUMP` or `DONE` is rejected after forking:** the current parent still has unjoined

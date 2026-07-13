@@ -30,6 +30,7 @@ impl<C: LlmClient> Driver<C> {
     }
 
     fn format_aspect_context(state: &PipelineState) -> String {
+        let context = std::iter::once(format!("CONTEXT {}", state.context_path()));
         let mut knowledge: Vec<_> = state.corpus.iter().collect();
         knowledge.sort_unstable_by_key(|(key, _)| *key);
         let knowledge = knowledge
@@ -43,10 +44,25 @@ impl<C: LlmClient> Driver<C> {
             .completed_forks
             .iter()
             .map(|fork| format!("FORK {} {}", fork.id, fork.prompt));
+        let mut fork_knowledge: Vec<_> = state
+            .completed_forks
+            .iter()
+            .flat_map(|fork| {
+                fork.corpus
+                    .iter()
+                    .map(|(key, value)| (fork.id.as_str(), key.as_str(), value.as_str()))
+            })
+            .collect();
+        fork_knowledge.sort_unstable_by_key(|(fork_id, key, _)| (*fork_id, *key));
+        let fork_knowledge = fork_knowledge
+            .into_iter()
+            .map(|(fork_id, _, value)| format!("FORK_KNOWLEDGE {fork_id} {value}"));
 
-        knowledge
+        context
+            .chain(knowledge)
             .chain(jump_points)
             .chain(fork_history)
+            .chain(fork_knowledge)
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -154,13 +170,6 @@ impl<C: LlmClient> Driver<C> {
                             if state.completed_forks.iter().any(|fork| fork.id == id) {
                                 anyhow::bail!("fork ID '{}' already exists", id);
                             }
-                            let next_index = state.current_index + 1;
-                            if next_index >= state.aspects.len() {
-                                anyhow::bail!(
-                                    "cannot fork from the final Aspect '{}'; no child start Aspect exists",
-                                    aspect.id
-                                );
-                            }
                             let mut branch_path = state.branch_path.clone();
                             branch_path.push(id.clone());
                             let fork_state = PipelineState {
@@ -169,7 +178,7 @@ impl<C: LlmClient> Driver<C> {
                                 branch_path,
                                 completed_forks: Vec::new(),
                                 request: state.request.clone(),
-                                current_index: next_index,
+                                current_index: state.current_index,
                                 aspects: state.aspects.clone(),
                                 corpus: state.corpus.clone(),
                                 max_turns: state.max_turns,
@@ -183,10 +192,15 @@ impl<C: LlmClient> Driver<C> {
                                     stopped: true,
                                 });
                             }
+                            let fork_corpus = fork_outcome
+                                .corpus
+                                .into_iter()
+                                .filter(|(key, value)| state.corpus.get(key) != Some(value))
+                                .collect();
                             state.completed_forks.push(CompletedFork {
                                 id,
                                 prompt,
-                                corpus: fork_outcome.corpus,
+                                corpus: fork_corpus,
                             });
                         }
                         AspectAction::Jump(id) => {
@@ -285,7 +299,7 @@ mod tests {
 
         let parent_fork = "FORK f1 Analyze the alternative".to_string();
         let fork_knowledge = "SET The behavior needs a failing test.".to_string();
-        let fork_result = "DONE Fork 1 Final".to_string();
+        let fork_result = "CONTINUE".to_string();
         let parent_merge = "CONTINUE".to_string();
         let parent_result = "DONE Parent Final".to_string();
 
@@ -335,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn test_continue_returns_child_corpus_to_parent() {
+    fn test_fork_runs_current_aspect_and_returns_knowledge_to_parent() {
         let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
         std::fs::write(
             temp_dir.path().join("aspect-worker.md"),
@@ -345,9 +359,11 @@ mod tests {
 
         let client = RecordingMockLlmClient {
             responses: Mutex::new(vec![
+                "SET CAST draft".to_string(),
                 "FORK hero Create a fantasy hero".to_string(),
                 "SET CHARACTER Lyra".to_string(),
                 "CONTINUE".to_string(),
+                "SET CAST Lyra".to_string(),
                 "CONTINUE".to_string(),
                 "DONE Lyra crossed the moonlit bridge.".to_string(),
             ]),
@@ -366,14 +382,14 @@ mod tests {
                     model: None,
                 },
                 Aspect {
-                    id: "compose".to_string(),
-                    name: "Compose".to_string(),
+                    id: "story".to_string(),
+                    name: "Story".to_string(),
                     aspect_type: AspectType::Worker,
-                    prompt: "Create a character in a fork; otherwise compose".to_string(),
+                    prompt: "Compose from the joined Corpus".to_string(),
                     model: None,
                 },
             ],
-            std::num::NonZeroUsize::new(5).expect("turn limit is non-zero"),
+            std::num::NonZeroUsize::new(7).expect("turn limit is non-zero"),
             3,
         );
 
@@ -385,12 +401,21 @@ mod tests {
             .prompts
             .lock()
             .expect("prompts lock should not be poisoned");
-        assert!(prompts[1].contains("Aspect: compose\nFork: Create a fantasy hero"));
-        assert!(prompts[2].contains("KNOWLEDGE CHARACTER Lyra"));
-        assert!(prompts[3].contains("Aspect: branch\nFork: \n"));
-        assert!(!prompts[3].contains("KNOWLEDGE CHARACTER Lyra"));
-        assert!(prompts[4].contains("Aspect: compose\nFork: \n"));
-        assert!(prompts[4].contains("KNOWLEDGE CHARACTER Lyra"));
+        assert!(prompts[0].contains("CONTEXT branch"));
+        assert!(prompts[1].contains("KNOWLEDGE CAST draft"));
+        assert!(prompts[2].contains("Aspect: branch\nFork: Create a fantasy hero"));
+        assert!(prompts[2].contains("CONTEXT branch/hero"));
+        assert!(prompts[3].contains("KNOWLEDGE CHARACTER Lyra"));
+        assert!(prompts[4].contains("Aspect: branch\nFork: \n"));
+        assert!(!prompts[4].contains("KNOWLEDGE CHARACTER Lyra"));
+        assert!(prompts[4].contains("FORK_KNOWLEDGE hero CHARACTER Lyra"));
+        assert!(prompts[5].contains("KNOWLEDGE CAST Lyra"));
+        assert!(!prompts[5].contains("KNOWLEDGE CAST draft"));
+        assert!(prompts[5].contains("FORK_KNOWLEDGE hero CHARACTER Lyra"));
+        assert!(prompts[6].contains("Aspect: story\nFork: \n"));
+        assert!(prompts[6].contains("KNOWLEDGE CHARACTER Lyra"));
+        assert!(prompts[6].contains("KNOWLEDGE CAST Lyra"));
+        assert!(!prompts[6].contains("KNOWLEDGE CAST draft"));
     }
 
     #[test]
@@ -424,6 +449,42 @@ mod tests {
             .run(&mut ctx, state)
             .expect_err("loop should hit the turn limit");
         assert!(error.to_string().contains("max_turns limit of 2"));
+    }
+
+    #[test]
+    fn test_final_aspect_can_fork_and_join() {
+        let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
+        std::fs::write(temp_dir.path().join("aspect-worker.md"), "{{context}}")
+            .expect("worker template should be written");
+
+        let client = MockLlmClient {
+            responses: Mutex::new(vec![
+                "FORK check Verify the final calculation".to_string(),
+                "SET VERIFIED 42".to_string(),
+                "JOIN".to_string(),
+                "CONTINUE".to_string(),
+            ]),
+        };
+        let driver = Driver::new(client, temp_dir.path().to_path_buf());
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Verify the answer".to_string(),
+            vec![Aspect {
+                id: "verify".to_string(),
+                name: "Verify".to_string(),
+                aspect_type: AspectType::Worker,
+                prompt: "Fork one independent check".to_string(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(4).expect("turn limit is non-zero"),
+            1,
+        );
+
+        let results = driver
+            .run(&mut ctx, state)
+            .expect("final Aspect fork should join cleanly");
+
+        assert!(results.is_empty());
     }
 
     #[test]
@@ -502,9 +563,9 @@ mod tests {
         assert_eq!(
             prompts.as_slice(),
             [
-                "Context:\nASPECT a1",
-                "Context:\nKNOWLEDGE Preserve compatibility\nASPECT a1",
-                "Context:\nKNOWLEDGE Preserve the stable API\nASPECT a1",
+                "Context:\nCONTEXT a1\nASPECT a1",
+                "Context:\nCONTEXT a1\nKNOWLEDGE Preserve compatibility\nASPECT a1",
+                "Context:\nCONTEXT a1\nKNOWLEDGE Preserve the stable API\nASPECT a1",
             ]
         );
     }
@@ -562,9 +623,9 @@ mod tests {
         assert_eq!(
             prompts.as_slice(),
             [
-                "Request: Keep this request intact\nContext:\nASPECT a1\nASPECT a2",
-                "Request: Keep this request intact\nContext:\nKNOWLEDGE Preserve compatibility\nASPECT a1\nASPECT a2",
-                "Request: Keep this request intact\nContext:\nKNOWLEDGE Preserve the stable API\nASPECT a1\nASPECT a2",
+                "Request: Keep this request intact\nContext:\nCONTEXT a1\nASPECT a1\nASPECT a2",
+                "Request: Keep this request intact\nContext:\nCONTEXT a1\nKNOWLEDGE Preserve compatibility\nASPECT a1\nASPECT a2",
+                "Request: Keep this request intact\nContext:\nCONTEXT a1\nKNOWLEDGE Preserve the stable API\nASPECT a1\nASPECT a2",
             ]
         );
     }

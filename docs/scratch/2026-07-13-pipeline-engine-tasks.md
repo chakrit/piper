@@ -43,6 +43,10 @@
 4. Expand recovery acceptance coverage beyond the committed shared-budget test: successful
    one-shot recovery through the CLI, preserved Corpus during recovery, malformed recovery
    failure, and recovery inside a fork.
+5. Change forks to execute the same Aspect that launched them. Add `CONTEXT
+   <aspect-id>/<fork-path...>`, explicit parent/fork instructions, and correlated
+   `FORK_KNOWLEDGE` in the parent prompt. Prove sibling isolation, parent-side synthesis,
+   nested context paths, and downstream joined Corpus with deterministic pipelines.
 
 ## Verification state
 

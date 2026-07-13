@@ -3,10 +3,10 @@ max_turns = 12
 
 [[pipeline.aspects]]
 id = "characters"
-name = "Fork Fantasy Characters"
-prompt = "Fork three independent character creations, then join them."
+name = "Fantasy Characters"
+prompt = "At root, fork three independent character creations and SET a cast after every result returns. In a fork, create only its directed character, SET it, then return."
 
 [[pipeline.aspects]]
 id = "story"
 name = "Write Short Story"
-prompt = "In a fork, create its directed character. In the root, write a short story using every character in the Corpus."
+prompt = "Write a short story using every character in the joined Corpus."

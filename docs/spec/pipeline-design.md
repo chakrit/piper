@@ -31,8 +31,9 @@ Order Aspects so dependent analysis follows the knowledge it needs:
   parent.
 - **Explicit routing**: Use `JUMP` only for a meaningful revisit to an `ASPECT` target.
 - **Forks are barriers**: Use `FORK` only for independent exploration. A child uses
-  `CONTINUE` or `JOIN` to return its isolated Corpus. The parent sees its completed fork
-  history and uses either alias to join all child Corpora before another Aspect starts.
+  the same Aspect with a narrower fork instruction, then uses `CONTINUE` or `JOIN` to
+  return its isolated Corpus. The parent sees correlated pending fork knowledge and uses
+  either alias to join all child Corpora before another Aspect starts.
 - **Explicit termination**: Use `STOP <reason>` for a clean blocked or abandoned run and
   `DONE <result>` for a completed final synthesis.
 - **Bounded execution**: Set `max_turns` high enough for intentional `SET` loops and forks,
@@ -46,7 +47,8 @@ Order Aspects so dependent analysis follows the knowledge it needs:
 2. **Constraint extraction**: Identify the durable facts and decisions later Aspects need.
 3. **Aspect design**: Give each Aspect one question or concern and order them by dependency.
 4. **Fork design**: Add a fork only for genuinely independent exploration. Give each branch
-   a distinct directive so the parent Worker can recognize it in fork history, and have the
-   child return with `CONTINUE` or its semantic alias `JOIN`.
+   a distinct directive that narrows the current Aspect. Have the child return with
+   `CONTINUE` or its semantic alias `JOIN`, then let the parent consolidate pending results
+   in the same Aspect before advancing.
 5. **Termination**: Add a synthesis Aspect only when a final Result is needed; otherwise a
    pipeline may end after its Corpus has been expanded.

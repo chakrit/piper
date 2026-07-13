@@ -44,9 +44,19 @@ elif [[ "$prompt" == *"Current Aspect**: Verify Replacement"* ]]; then
   else
     printf 'STOP replacement was not preserved\n'
   fi
-elif [[ "$prompt" == *"Current Aspect**: Fork Arithmetic Terms"* ]]; then
+elif [[ "$prompt" == *"Current Aspect**: Parallel Arithmetic"* && "$prompt" == *"Fork Directive**: calculate seven"* ]]; then
+  if [[ "$prompt" == *"KNOWLEDGE TERM_A 7"* ]]; then printf 'JOIN\n'; else printf 'SET TERM_A 7\n'; fi
+elif [[ "$prompt" == *"Current Aspect**: Parallel Arithmetic"* && "$prompt" == *"Fork Directive**: calculate eleven"* ]]; then
+  if [[ "$prompt" == *"KNOWLEDGE TERM_A 7"* ]]; then printf 'STOP sibling term leaked\n'; elif [[ "$prompt" == *"KNOWLEDGE TERM_B 11"* ]]; then printf 'CONTINUE\n'; else printf 'SET TERM_B 11\n'; fi
+elif [[ "$prompt" == *"Current Aspect**: Parallel Arithmetic"* && "$prompt" == *"Fork Directive**: calculate twenty-four"* ]]; then
+  if [[ "$prompt" == *"KNOWLEDGE TERM_A 7"* || "$prompt" == *"KNOWLEDGE TERM_B 11"* ]]; then printf 'STOP sibling terms leaked\n'; elif [[ "$prompt" == *"KNOWLEDGE TERM_C 24"* ]]; then printf 'JOIN\n'; else printf 'SET TERM_C 24\n'; fi
+elif [[ "$prompt" == *"Current Aspect**: Parallel Arithmetic"* ]]; then
   if [[ "$prompt" == *"FORK term-a calculate seven"* && "$prompt" == *"FORK term-b calculate eleven"* && "$prompt" == *"FORK term-c calculate twenty-four"* ]]; then
-    printf 'JOIN\n'
+    if [[ "$prompt" == *"FORK_KNOWLEDGE term-a TERM_A 7"* && "$prompt" == *"FORK_KNOWLEDGE term-b TERM_B 11"* && "$prompt" == *"FORK_KNOWLEDGE term-c TERM_C 24"* ]]; then
+      if [[ "$prompt" == *"KNOWLEDGE TOTAL 42"* ]]; then printf 'JOIN\n'; else printf 'SET TOTAL 42\n'; fi
+    else
+      printf 'STOP fork knowledge missing from parent context\n'
+    fi
   elif [[ "$prompt" != *"FORK term-a calculate seven"* ]]; then
     printf 'FORK term-a calculate seven\n'
   elif [[ "$prompt" != *"FORK term-b calculate eleven"* ]]; then
@@ -54,21 +64,25 @@ elif [[ "$prompt" == *"Current Aspect**: Fork Arithmetic Terms"* ]]; then
   else
     printf 'FORK term-c calculate twenty-four\n'
   fi
-elif [[ "$prompt" == *"Current Aspect**: Sum Arithmetic Terms"* && "$prompt" == *"Fork Directive**: calculate seven"* ]]; then
-  if [[ "$prompt" == *"KNOWLEDGE TERM_A 7"* ]]; then printf 'JOIN\n'; else printf 'SET TERM_A 7\n'; fi
-elif [[ "$prompt" == *"Current Aspect**: Sum Arithmetic Terms"* && "$prompt" == *"Fork Directive**: calculate eleven"* ]]; then
-  if [[ "$prompt" == *"KNOWLEDGE TERM_B 11"* ]]; then printf 'CONTINUE\n'; else printf 'SET TERM_B 11\n'; fi
-elif [[ "$prompt" == *"Current Aspect**: Sum Arithmetic Terms"* && "$prompt" == *"Fork Directive**: calculate twenty-four"* ]]; then
-  if [[ "$prompt" == *"KNOWLEDGE TERM_C 24"* ]]; then printf 'JOIN\n'; else printf 'SET TERM_C 24\n'; fi
-elif [[ "$prompt" == *"Current Aspect**: Sum Arithmetic Terms"* ]]; then
-  if [[ "$prompt" == *"KNOWLEDGE TERM_A 7"* && "$prompt" == *"KNOWLEDGE TERM_B 11"* && "$prompt" == *"KNOWLEDGE TERM_C 24"* ]]; then
+elif [[ "$prompt" == *"Current Aspect**: Verify Arithmetic"* ]]; then
+  if [[ "$prompt" == *"KNOWLEDGE TERM_A 7"* && "$prompt" == *"KNOWLEDGE TERM_B 11"* && "$prompt" == *"KNOWLEDGE TERM_C 24"* && "$prompt" == *"KNOWLEDGE TOTAL 42"* ]]; then
     printf 'DONE TOTAL 42\n'
   else
     printf 'STOP arithmetic terms missing from Corpus\n'
   fi
-elif [[ "$prompt" == *"Current Aspect**: Fork Fantasy Characters"* ]]; then
+elif [[ "$prompt" == *"Current Aspect**: Fantasy Characters"* && "$prompt" == *"Fork Directive**: create a moon ranger"* ]]; then
+  if [[ "$prompt" == *"KNOWLEDGE CHARACTER Lyra"* ]]; then printf 'JOIN\n'; else printf 'SET CHARACTER Lyra\n'; fi
+elif [[ "$prompt" == *"Current Aspect**: Fantasy Characters"* && "$prompt" == *"Fork Directive**: create a storm mage"* ]]; then
+  if [[ "$prompt" == *"KNOWLEDGE CHARACTER Lyra"* ]]; then printf 'STOP sibling character leaked\n'; elif [[ "$prompt" == *"KNOWLEDGE CHARACTER Orin"* ]]; then printf 'CONTINUE\n'; else printf 'SET CHARACTER Orin\n'; fi
+elif [[ "$prompt" == *"Current Aspect**: Fantasy Characters"* && "$prompt" == *"Fork Directive**: create a clockwork rogue"* ]]; then
+  if [[ "$prompt" == *"KNOWLEDGE CHARACTER Lyra"* || "$prompt" == *"KNOWLEDGE CHARACTER Orin"* ]]; then printf 'STOP sibling characters leaked\n'; elif [[ "$prompt" == *"KNOWLEDGE CHARACTER Vex"* ]]; then printf 'JOIN\n'; else printf 'SET CHARACTER Vex\n'; fi
+elif [[ "$prompt" == *"Current Aspect**: Fantasy Characters"* ]]; then
   if [[ "$prompt" == *"FORK hero create a moon ranger"* && "$prompt" == *"FORK mage create a storm mage"* && "$prompt" == *"FORK rogue create a clockwork rogue"* ]]; then
-    printf 'CONTINUE\n'
+    if [[ "$prompt" == *"FORK_KNOWLEDGE hero CHARACTER Lyra"* && "$prompt" == *"FORK_KNOWLEDGE mage CHARACTER Orin"* && "$prompt" == *"FORK_KNOWLEDGE rogue CHARACTER Vex"* ]]; then
+      if [[ "$prompt" == *"KNOWLEDGE CAST Lyra Orin Vex"* ]]; then printf 'CONTINUE\n'; else printf 'SET CAST Lyra Orin Vex\n'; fi
+    else
+      printf 'STOP character knowledge missing from parent context\n'
+    fi
   elif [[ "$prompt" != *"FORK hero create a moon ranger"* ]]; then
     printf 'FORK hero create a moon ranger\n'
   elif [[ "$prompt" != *"FORK mage create a storm mage"* ]]; then
@@ -76,20 +90,14 @@ elif [[ "$prompt" == *"Current Aspect**: Fork Fantasy Characters"* ]]; then
   else
     printf 'FORK rogue create a clockwork rogue\n'
   fi
-elif [[ "$prompt" == *"Current Aspect**: Write Short Story"* && "$prompt" == *"Fork Directive**: create a moon ranger"* ]]; then
-  if [[ "$prompt" == *"KNOWLEDGE CHARACTER Lyra"* ]]; then printf 'JOIN\n'; else printf 'SET CHARACTER Lyra\n'; fi
-elif [[ "$prompt" == *"Current Aspect**: Write Short Story"* && "$prompt" == *"Fork Directive**: create a storm mage"* ]]; then
-  if [[ "$prompt" == *"KNOWLEDGE CHARACTER Orin"* ]]; then printf 'CONTINUE\n'; else printf 'SET CHARACTER Orin\n'; fi
-elif [[ "$prompt" == *"Current Aspect**: Write Short Story"* && "$prompt" == *"Fork Directive**: create a clockwork rogue"* ]]; then
-  if [[ "$prompt" == *"KNOWLEDGE CHARACTER Vex"* ]]; then printf 'JOIN\n'; else printf 'SET CHARACTER Vex\n'; fi
 elif [[ "$prompt" == *"Current Aspect**: Write Short Story"* ]]; then
-  if [[ "$prompt" == *"KNOWLEDGE CHARACTER Lyra"* && "$prompt" == *"KNOWLEDGE CHARACTER Orin"* && "$prompt" == *"KNOWLEDGE CHARACTER Vex"* ]]; then
+  if [[ "$prompt" == *"KNOWLEDGE CHARACTER Lyra"* && "$prompt" == *"KNOWLEDGE CHARACTER Orin"* && "$prompt" == *"KNOWLEDGE CHARACTER Vex"* && "$prompt" == *"KNOWLEDGE CAST Lyra Orin Vex"* ]]; then
     printf 'DONE Lyra, Orin, and Vex sealed the rift.\n'
   else
     printf 'STOP characters missing from Corpus\n'
   fi
 elif [[ "$prompt" == *"Fork Directive**: child branch"* ]]; then
-  printf 'DONE Child complete\n'
+  if [[ "$prompt" == *"KNOWLEDGE Child branch complete"* ]]; then printf 'JOIN\n'; else printf 'SET Child branch complete\n'; fi
 elif [[ "$prompt" == *"Current Aspect**: Collect Knowledge"* ]]; then
   if [[ "$prompt" == *"KNOWLEDGE Alpha requirement"* ]]; then
     printf 'CONTINUE\n'

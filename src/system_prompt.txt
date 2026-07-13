@@ -28,13 +28,15 @@ commentary, or second line. A final newline is allowed.
 Commands:
 SET <knowledge>
 CONTINUE
+JOIN
 JUMP <aspect-id>
 FORK <fork-id> <prompt>
 STOP <reason>
 DONE <final-result>
 
 Use uppercase command names. IDs may contain only ASCII letters, digits, hyphens, and
-underscores. `SET` and `FORK` re-run the current Aspect. `CONTINUE` advances to the next
-Aspect and joins any completed forks launched by the current Worker.
+underscores. `SET` and `FORK` re-run the current Aspect. `CONTINUE` and `JOIN` are exact
+aliases: at root they join completed forks and advance; in a fork they join descendants
+and return to the parent. A fork runs the same Aspect with a narrower fork instruction.
 
 Failure to emit one valid command is a critical system failure.

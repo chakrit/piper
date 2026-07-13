@@ -48,13 +48,8 @@ max_recoveries = 2
 
 [[pipeline.aspects]]
 id = "research-plan"
-name = "Research Planner"
-prompt = "Launch exactly three independent forks: customer evidence, competitor evidence, and operational evidence. Give each fork a specific directive. Use completed FORK directives to avoid repeating an assignment. After all three are complete, join them."
-
-[[pipeline.aspects]]
-id = "evidence"
-name = "Evidence Researcher"
-prompt = "When Fork Directive is present, answer only that assignment. SET one compact finding containing the claim, its evidence or source, and any uncertainty; once that contribution is visible as KNOWLEDGE, return to the parent. When no Fork Directive is present, do not add a finding; continue to synthesis."
+name = "Plan and Perform Research"
+prompt = "At root, launch exactly three independent forks: customer evidence, competitor evidence, and operational evidence. Give each fork a specific directive and use completed FORK history to avoid repeats. In a fork, answer only the Fork Directive, SET one compact finding containing the claim, evidence or source, and uncertainty, then return with CONTINUE or JOIN. At root after all three return, use their correlated FORK_KNOWLEDGE to SET one compact research bundle, then CONTINUE or JOIN to make every finding durable and advance."
 
 [[pipeline.aspects]]
 id = "synthesis"
@@ -66,18 +61,18 @@ Piper configuration remains in the shared `piper.toml`. At minimum, its `[llm]` 
 provide the invocation, system prompt, and default model. This separation lets many small
 pipeline files share one local model setup.
 
-The `evidence` Aspect has two roles because a child starts at the Aspect immediately after
-the one that forked it:
+The `research-plan` Aspect owns the complete fan-out/fan-in operation:
 
-- In a child, `Fork Directive` contains that branch's assignment. The Worker records its
-  answer with `SET`, is run again with its contribution now present as `KNOWLEDGE`, and then
-  returns to the parent.
-- In the root run, there is no fork directive. After the parent joins, the root advances
-  through `evidence`; that pass simply continues to `synthesis` without creating a fourth
-  finding.
+- At root, it launches branches and later receives their correlated pending results as
+  `FORK_KNOWLEDGE`.
+- In a child, `Fork Directive` contains that branch's assignment. The same Aspect records
+  its answer with `SET`, is run again with its contribution as `KNOWLEDGE`, and returns.
+- Once every result returns, the root can consolidate them with its own `SET` before joining
+  and advancing to synthesis.
 
-This distinction belongs in the Aspect prompt. Piper provides the branch directive, but it
-does not infer different jobs for root and child executions of the same Aspect.
+Piper supplies `CONTEXT research-plan` at root and paths such as `CONTEXT
+research-plan/customer` inside forks. The Worker template also explains the parent and fork
+instructions, so the model does not infer its branch role from prose alone.
 
 ## Run it
 
@@ -104,20 +99,20 @@ Exact Worker wording varies, but the command sequence should have this shape:
 
 ```text
 research-plan (root): FORK customer Find the strongest customer need and evidence.
-evidence (customer):  SET Customer finding: ...
-evidence (customer):  JOIN
+research-plan/customer: SET Customer finding: ...
+research-plan/customer: JOIN
 
 research-plan (root): FORK competitor Find the closest alternative and a meaningful gap.
-evidence (competitor): SET Competitor finding: ...
-evidence (competitor): CONTINUE
+research-plan/competitor: SET Competitor finding: ...
+research-plan/competitor: CONTINUE
 
 research-plan (root): FORK operations Find the largest launch constraint and a mitigation.
-evidence (operations): SET Operations finding: ...
-evidence (operations): JOIN
+research-plan/operations: SET Operations finding: ...
+research-plan/operations: JOIN
 
+research-plan (root): SET Research bundle: ...all three pending findings...
 research-plan (root): CONTINUE
-evidence (root):       CONTINUE
-synthesis (root):      DONE ...final brief using all three findings...
+synthesis (root): DONE ...final brief using all three findings...
 ```
 
 `CONTINUE` and `JOIN` are exact aliases. Their effect depends on execution context:
@@ -132,14 +127,16 @@ Choose the word that reads naturally; there is no semantic decision between them
 example intentionally uses both to show that they share one transition.
 
 Forks are completed synchronously in the current engine. The planner is rerun after each
-child returns and sees a `FORK <id> <directive>` history entry, but it does not yet see that
-child's new knowledge. This isolation prevents the second researcher from merely echoing
-the first. When the planner finally emits `CONTINUE` or `JOIN`, Piper merges every completed
+child returns and sees both `FORK <id> <directive>` history and correlated
+`FORK_KNOWLEDGE <id> <value>`. Those pending results are visible only to the parent; a new
+sibling still starts from the unchanged parent Corpus. This prevents the second researcher
+from merely echoing the first while allowing the parent to consolidate results in the same
+Aspect. When the planner finally emits `CONTINUE` or `JOIN`, Piper merges every completed
 child Corpus, clears the fork history, and advances.
 
 ## Why small contexts help
 
-Each evidence call receives the stable Request, one focused Aspect prompt, its
+Each branch call receives the stable Request, one focused Aspect prompt, its
 single branch directive, and the Corpus available when the branch began. It does not need
 the other researchers' scratch work or the eventual writing instructions. That narrower
 job is more tractable for a smaller model and makes failures easier to attribute.
@@ -163,9 +160,8 @@ research contribution usually includes:
 `max_turns` is shared by the root and every branch. Every normal Worker pass consumes one
 turn. In this example, the expected minimum is twelve turns:
 
-- four planner passes: three `FORK` commands and one join/continue;
+- five root research passes: three `FORK` commands, one consolidating `SET`, and one join;
 - six child passes: one `SET` and one return for each of three branches;
-- one root pass through `evidence`;
 - one synthesis pass.
 
 Therefore `max_turns = 14` leaves two turns for a Worker that refines its own contribution
@@ -190,10 +186,11 @@ out of the synthesis Aspect's configured prompt. Then make the fake LLM inspect 
 and reject an unexpected state:
 
 1. A child prompt contains only its assigned marker and the Corpus copied at fork time.
-2. The planner's prompt after a child returns contains that child's `FORK` history but not
-   its marker as `KNOWLEDGE`.
-3. The synthesis prompt contains all three markers as `KNOWLEDGE`.
-4. The text passed to `DONE` contains every marker exactly as required.
+2. Later sibling prompts do not contain earlier markers.
+3. The planner's root prompt contains every marker as correlated `FORK_KNOWLEDGE`, but not
+   as ordinary joined `KNOWLEDGE`.
+4. The synthesis prompt contains all three markers as `KNOWLEDGE`.
+5. The text passed to `DONE` contains every marker exactly as required.
 
 Also run the repository checks after changing engine behavior or fixtures:
 
@@ -214,18 +211,14 @@ Repeated forks usually mean the planner ignored its `FORK` history. Tell it the 
 of assignments and require unique IDs. Piper rejects a duplicate fork ID from the same
 Worker, but a model can still waste turns inventing new IDs for the same question.
 
-Missing findings at synthesis usually mean the parent has not joined. A completed child is
-listed in parent fork history while its new Corpus remains hidden. The parent must emit
-either `CONTINUE` or `JOIN`; attempting `JUMP`, `STOP`, or `DONE` with unjoined fork work is
-rejected rather than silently discarding it.
+Missing findings at synthesis usually mean the parent has not joined. A completed result is
+visible to the parent as pending `FORK_KNOWLEDGE`, but it is not ordinary Corpus knowledge
+until the parent emits `CONTINUE` or `JOIN`. Attempting `JUMP`, `STOP`, or `DONE` with
+unjoined fork work is rejected rather than silently discarding it.
 
-A child that reaches synthesis has failed to return from `evidence`. Its second pass should
+A child that fails to return keeps rerunning the research Aspect. Its second pass should
 recognize its own contribution in `KNOWLEDGE` and emit `CONTINUE` or `JOIN`. In a child,
 that command returns to the parent; it does not advance to the next Aspect.
-
-An unwanted fourth finding means the evidence prompt did not distinguish root execution
-from fork execution. Require a non-empty Fork Directive before researching and make the
-no-directive path continue without `SET`.
 
 An endless refinement loop means a Worker keeps emitting `SET`. Since `SET` replaces its
 own contribution and reruns the same Aspect, the prompt must define when the finding is

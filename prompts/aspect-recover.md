@@ -8,6 +8,7 @@ The required shape is:
 ```text
 SET durable constraint
 CONTINUE
+JOIN
 JUMP aspect-id
 FORK fork-id branch directive
 STOP blocked reason

@@ -14,7 +14,7 @@ prompt = "Analyze the Request against the specifications. Use SET to record the 
 [[pipeline.aspects]]
 id = "distill"
 name = "Distill Work Streams"
-prompt = "Identify independent work streams from the Request and Corpus. For each independent branch, return FORK with a unique ID and concise directive; this Aspect reruns after that child completes. Once every branch is complete, return CONTINUE to join completed forks. For one stream, return CONTINUE."
+prompt = "At root, identify independent work streams from the Request and Corpus. For each independent branch, return FORK with a unique ID and concise directive; this Aspect reruns with correlated FORK_KNOWLEDGE after that child returns. In a fork, analyze only the Fork Directive, use SET to record the finding, then return with CONTINUE or JOIN. Once every root branch is complete, use SET to consolidate the pending findings, then return CONTINUE or JOIN to make them durable and advance. For one stream, SET the consolidated finding directly and continue."
 
 [[pipeline.aspects]]
 id = "architect"

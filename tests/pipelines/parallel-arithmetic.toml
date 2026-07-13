@@ -2,11 +2,11 @@
 max_turns = 12
 
 [[pipeline.aspects]]
-id = "terms"
-name = "Fork Arithmetic Terms"
-prompt = "Fork three independent term calculations, then join them."
+id = "arithmetic"
+name = "Parallel Arithmetic"
+prompt = "At root, fork three independent term calculations and SET their total after every result returns. In a fork, calculate only its directed term, SET it, then return."
 
 [[pipeline.aspects]]
-id = "sum"
-name = "Sum Arithmetic Terms"
-prompt = "In a fork, calculate its directed term. In the root, sum only Corpus terms."
+id = "verify"
+name = "Verify Arithmetic"
+prompt = "Return the total and every joined term supplied through the Corpus."

@@ -40,13 +40,8 @@ prompt = "Extract a concise implementation contract: required behavior, compatib
 
 [[pipeline.aspects]]
 id = "dispatch"
-name = "Specialist Dispatch"
-prompt = "Launch exactly three independent reviews with distinct fork IDs: correctness for behavioral and state-transition errors; security for trust boundaries, validation, and abuse cases; testability for observable acceptance checks and regression coverage. Use the completed FORK directives to avoid duplicates. The child findings remain isolated until all three reviews are complete. Then use JOIN."
-
-[[pipeline.aspects]]
-id = "specialist"
-name = "Specialist Review"
-prompt = "When a fork directive is present, perform only that specialist review using the Request and existing requirements knowledge. SET one concise contribution containing findings, severity, and concrete verification. On the next pass use JOIN to return the branch to its parent. When no fork directive is present, this is the root bridge after dispatch; use CONTINUE without adding a specialist finding."
+name = "Dispatch and Consolidate Specialist Reviews"
+prompt = "At root, launch exactly three independent reviews with distinct fork IDs: correctness for behavioral and state-transition errors; security for trust boundaries, validation, and abuse cases; testability for observable acceptance checks and regression coverage. Use completed FORK history to avoid duplicates. In a fork, perform only the Fork Directive using the Request and requirements knowledge, SET one concise finding with severity and concrete verification, then return with CONTINUE or JOIN. At root after all three return, use correlated FORK_KNOWLEDGE to SET one consolidated specialist record, then CONTINUE or JOIN to make every finding durable and advance."
 
 [[pipeline.aspects]]
 id = "integration"
@@ -124,10 +119,10 @@ FORK testability Define observable acceptance, concurrency, persistence, and reg
 JOIN
 ```
 
-`FORK <id> <directive>` starts an isolated child synchronously at the *next* Aspect,
-`specialist`. All three branches therefore share the same focused specialist prompt; the
-fork directive tells that Worker which lens to apply. A fork receives a copy of the current
-Corpus, including requirements knowledge.
+`FORK <id> <directive>` starts an isolated child synchronously on the current `dispatch`
+Aspect. All three branches therefore share the same focused parent instruction; the fork
+directive narrows that instruction to one lens. A fork receives a copy of the current
+Corpus, including requirements knowledge, and a path such as `CONTEXT dispatch/security`.
 
 When a child sets its finding, its next response is either:
 
@@ -145,16 +140,15 @@ These commands are exact aliases. Inside a child, either joins any descendants a
 the child's Corpus to its parent. A child does not continue through the remaining root
 pipeline.
 
-After each child returns, the dispatcher sees a `FORK` history directive containing the ID
-and original directive. It does not yet see that child's findings as `KNOWLEDGE`. This
-isolation lets it launch the other independent reviews without one branch anchoring another.
+After each child returns, the dispatcher sees a `FORK` history directive and correlated
+`FORK_KNOWLEDGE`. These pending results are visible to the parent but do not enter the
+starting Corpus of later siblings, so one review cannot anchor another.
 Duplicate fork IDs from the same Worker are rejected.
 
-When the dispatcher finally emits `JOIN` (or its identical alias `CONTINUE`), Piper joins
-all completed child Corpora and advances the root. Joined findings become knowledge for
-later Aspects. Because a fork always starts at the next Aspect, the root then visits
-`specialist` once; the prompt explicitly tells this no-directive root pass to `CONTINUE`.
-The integration reviewer is the first substantive root Aspect to consume all three findings.
+When the dispatcher has every result, it can `SET` one consolidation while remaining in the
+same Aspect. Its final `JOIN` (or identical alias `CONTINUE`) joins all completed child
+Corpora and advances root directly to `integration`, where every specialist result is
+ordinary durable knowledge.
 
 ### Integration can progress, route, or stop
 
@@ -209,9 +203,8 @@ Every Worker pass consumes one turn across the root and every fork. Gates consum
 An expected successful path here uses roughly:
 
 - two requirements passes: `SET`, then `CONTINUE`;
-- four dispatcher passes: three `FORK` commands, then `JOIN`;
+- five dispatcher passes: three `FORK` commands, one consolidating `SET`, then `JOIN`;
 - two passes in each of three children: `SET`, then child return;
-- one root bridge pass at `specialist`;
 - two integration passes: `SET`, then `CONTINUE`;
 - one final `DONE` pass.
 
@@ -231,8 +224,8 @@ not merely that Piper accepted a sequence of commands:
 
 - Give each specialist branch a unique marker that exists in neither the integration prompt
   nor the fake integration logic.
-- Assert that the dispatcher sees completed `FORK` history but not child markers before its
-  join.
+- Assert that the dispatcher sees completed `FORK` history and correlated
+  `FORK_KNOWLEDGE`, while later siblings never receive earlier child markers.
 - Assert that the integration prompt contains all markers as `KNOWLEDGE` after the join.
 - Make the final fake derive an exact verdict from those received markers and assert the CLI
   output.
@@ -249,14 +242,12 @@ be the only evidence that isolation, joining, or routing works.
 
 - **Extra prose or Markdown from a Worker:** output must be exactly one non-empty DSL line.
   Piper attempts one recovery, then fails.
-- **A branch reaches later Aspects unexpectedly:** child `CONTINUE` and `JOIN` return to the
-  parent; ensure the child actually emits one after setting its contribution.
+- **A branch loops in the dispatch Aspect:** child `CONTINUE` and `JOIN` return to the
+  parent; ensure the child emits one after setting its contribution.
 - **Joined findings are missing:** the parent sees only fork history until it emits
   `CONTINUE` or `JOIN`. Do not expect child knowledge during dispatch.
 - **A duplicate branch fails:** fork IDs are unique per launching Worker. Use completed fork
   history to avoid launching the same ID twice.
-- **A fork at the final Aspect fails:** children start at the next Aspect, so a final Aspect
-  has nowhere to launch one.
 - **The run ends with no final output:** reaching the end can leave only an expanded Corpus.
   Use a synthesis Aspect with `DONE` when the caller needs a Result.
 - **The turn limit arrives early:** count `SET` reruns, dispatcher reruns, every child pass,

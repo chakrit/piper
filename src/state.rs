@@ -87,6 +87,15 @@ impl PipelineState {
         format!("{}/{}", self.branch_path.join("/"), aspect_id)
     }
 
+    pub fn context_path(&self) -> String {
+        let aspect_id = &self.current_aspect().id;
+        if self.branch_path.is_empty() {
+            return aspect_id.to_string();
+        }
+
+        format!("{aspect_id}/{}", self.branch_path.join("/"))
+    }
+
     pub fn current_aspect(&self) -> &Aspect {
         &self.aspects[self.current_index]
     }

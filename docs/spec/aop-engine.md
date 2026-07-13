@@ -114,49 +114,64 @@ DONE Final readiness assessment.
 | `CONTINUE` | none | Alias of `JOIN`. Joins any completed child Corpora first. In the root run, advances to the next Aspect; in a fork, returns the branch Corpus to its parent. |
 | `JOIN` | none | Alias of `CONTINUE`. Joins any completed child Corpora first. In the root run, advances to the next Aspect; in a fork, returns the branch Corpus to its parent. |
 | `JUMP` | `<aspect-id>` | Transfers control to an `ASPECT` target. It is invalid while the current Worker has unjoined forks. |
-| `FORK` | `<fork-id> <directive>` | Runs an isolated child from the next Aspect with the same Request and starting Corpus. The child completes before the parent Worker runs again. |
+| `FORK` | `<fork-id> <directive>` | Runs an isolated child on the current Aspect with the same Request and starting Corpus. The child receives the parent Aspect instruction plus its branch directive. The child completes before the parent Worker runs again. |
 | `STOP` | `<reason>` | Stops the entire run cleanly without a final Result. A child `STOP` stops its parent run as well. |
 | `DONE` | `<result>` | Returns a final Result immediately. It is invalid while the current Worker has unjoined forks. |
 
 The driver rejects unknown verbs, malformed arguments, duplicate fork IDs from one Worker,
-a fork from the final Aspect, and `JUMP`, `STOP`, or `DONE` that would discard unjoined fork
-work. `SET` is the sole knowledge mutation command; `ADD-KNOWLEDGE`, `UPDATE-KNOWLEDGE`,
-`NEXT`, and `MERGE` are not part of this protocol.
+and `JUMP`, `STOP`, or `DONE` that would discard unjoined fork work. `SET` is the sole
+knowledge mutation command; `ADD-KNOWLEDGE`, `UPDATE-KNOWLEDGE`, `NEXT`, and `MERGE` are
+not part of this protocol.
 
 ## Corpus context
 
 The driver provides each Worker with compact directives:
 
 ```text
+CONTEXT security-review
 KNOWLEDGE Preserve public API compatibility.
 ASPECT security-review
 ASPECT final-synthesis
 FORK alternative-1 Explore migration risk.
+FORK_KNOWLEDGE alternative-1 Preserve rollback compatibility.
 ```
 
+- `CONTEXT` identifies the current Aspect followed by any nested fork path. A root pass uses
+  only the Aspect ID, such as `CONTEXT security-review`; a child uses paths such as
+  `CONTEXT security-review/alternative-1`.
 - `KNOWLEDGE` contains the current Corpus. Source metadata may be displayed for orientation,
   but Workers do not address entries by key.
 - `ASPECT` lists the valid `JUMP` targets.
 - `FORK` lists completed forks launched by the current Worker, including the directive used
   to create each fork. This history prevents the Worker from repeating equivalent branches.
+- `FORK_KNOWLEDGE` exposes a completed child's contributions to its parent Worker, correlated
+  by fork ID. These pending contributions are not part of the parent Corpus until the
+  parent emits `CONTINUE` or `JOIN`.
 
 `FORK` history is scoped to the Worker that created those branches. A child has independent
-fork history if it creates further forks.
+fork history if it creates further forks. New sibling forks start from the same parent
+Corpus and do not inherit pending contributions from previously completed siblings.
 
 ## Fork lifecycle
 
 A fork is a branch, not a namespace the Worker must manage.
 
 1. A Worker emits `FORK alternative-1 Explore migration risk.`
-2. The driver runs that child synchronously at the next Aspect with a copy of the parent
-   Corpus. The child may use `SET` repeatedly to establish or replace its contribution.
-3. The child emits `CONTINUE` or `JOIN`. Both commands join any completed descendants and
+2. The driver runs that child synchronously on the same Aspect with a copy of the parent
+   Corpus. Its prompt says it is in a fork, repeats the parent Aspect instruction, supplies
+   the fork instruction, and identifies the branch as
+   `CONTEXT <aspect-id>/<fork-path...>`.
+3. The child may use `SET` repeatedly to establish or replace its contribution.
+4. The child emits `CONTINUE` or `JOIN`. Both commands join any completed descendants and
    return the branch Corpus to its parent instead of advancing the child to another Aspect.
-4. The driver retains the completed child Corpus and returns to the parent Worker. It adds a
-   `FORK alternative-1 …` history directive to the parent prompt, but does not yet expose
-   the child Corpus as parent knowledge.
-5. The parent may create more forks. It eventually emits either `CONTINUE` or `JOIN`.
-6. The command waits for all child work, joins every completed child Corpus into the parent
+5. The driver retains the completed child Corpus and returns to the parent Worker. The
+   parent reruns on the same Aspect with `FORK alternative-1 …` history and correlated
+   `FORK_KNOWLEDGE alternative-1 …` directives. The child contributions remain pending,
+   not yet part of the parent Corpus.
+6. The parent may use the pending results to `SET` a consolidated contribution or create
+   more sibling forks. Every sibling starts from the unchanged parent Corpus.
+7. The parent eventually emits either `CONTINUE` or `JOIN`.
+8. The command waits for all child work, joins every completed child Corpus into the parent
    Corpus, clears the fork history, and advances the root run to the next Aspect.
 
 `CONTINUE` and `JOIN` are two names for the same context-sensitive transition, not separate
