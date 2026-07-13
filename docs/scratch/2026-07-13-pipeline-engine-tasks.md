@@ -4,8 +4,9 @@
 
 ## Resume state
 
-- Branch: `main`, ahead of `gh/main` by 15 commits at this checkpoint; working tree clean
-  before this breadcrumb update.
+- Branch: `main`, ahead of `gh/main` by 17 commits before this breadcrumb update. The only
+  unrelated working-tree entry is the pre-existing untracked `tmp/` directory; leave it
+  untouched unless the user explicitly scopes it in.
 - Accepted the durable run contract in `docs/spec/run-lifecycle.md`: XDG project state,
   stable pipeline IDs, ULID run IDs with human-friendly prefixes, per-pipeline active
   pointers, and interactive selection for ambiguous `continue`/`abort` commands.
@@ -18,8 +19,13 @@
   invariants before driving, anchors environment files beside the selected shared config,
   hardens private XDG metadata creation, and removes the premature checkpoint/serde seam
   until a real durable run aggregate owns it.
+- Added `piper config <pipeline.toml>` and checkout-independent runtime templates in
+  `e01b3a0 make runtime configuration inspectable and portable`. Effective TOML includes
+  environment interpolation, defaults, and resolved file-backed Aspects. The built-in
+  Worker and recovery templates are compiled into the binary; `--prompts` remains the
+  explicit custom-directory override.
 - Required verification passed after the audit: `cargo fmt --check`, clippy over all
-  targets/features with warnings denied, 46 unit tests, 7 CLI tests, and `git diff --check`.
+  targets/features with warnings denied, 46 unit tests, 9 CLI tests, and `git diff --check`.
 - A complete checkout scan found no tracked, ignored, cached, or hidden Python artifacts.
   Git history only records the already-deleted legacy Python tree in `67cd25f` and
   `0fe8100`; do not rewrite history unless explicitly requested.
@@ -69,11 +75,11 @@
 
 ## Verification state
 
-After the 2026-07-13 ACE audit, these passed:
+After `e01b3a0`, these passed:
 
 - `cargo fmt --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test` (46 unit tests and 7 CLI tests)
+- `cargo test` (46 unit tests and 9 CLI tests)
 - `git diff --check`
 
 Rerun all checks before each code commit.
