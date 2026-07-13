@@ -44,6 +44,7 @@ Save this as `pipelines/launch-research.toml` (or any path outside `piper.toml`)
 ```toml
 [pipeline]
 max_turns = 14
+max_recoveries = 2
 
 [[pipeline.aspects]]
 id = "research-plan"
@@ -168,9 +169,9 @@ turn. In this example, the expected minimum is twelve turns:
 - one synthesis pass.
 
 Therefore `max_turns = 14` leaves two turns for a Worker that refines its own contribution
-with another `SET`. Parser recovery is one permitted extra model call within the same
-Worker pass and does not consume another turn, but it can still consume model tokens or
-provider quota.
+with another `SET`. Parser recovery is an extra model call within the same Worker pass and
+does not consume another turn, but it consumes the separate shared `max_recoveries` budget
+and still uses model tokens or provider quota.
 
 Do not set a large limit merely to make loops disappear. Estimate the intended command
 sequence, allow a small refinement margin, and treat exhaustion as evidence that an Aspect

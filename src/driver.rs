@@ -120,6 +120,7 @@ impl<C: LlmClient> Driver<C> {
                     let action = match AspectAction::parse(&raw_response) {
                         Ok(action) => action,
                         Err(_) => {
+                            ctx.consume_recovery(state.max_recoveries)?;
                             println!("[Driver] DSL parsing failed. Attempting recovery...");
                             let recover_template = self.load_prompt("aspect-recover.md")?;
 
@@ -172,6 +173,7 @@ impl<C: LlmClient> Driver<C> {
                                 aspects: state.aspects.clone(),
                                 corpus: state.corpus.clone(),
                                 max_turns: state.max_turns,
+                                max_recoveries: state.max_recoveries,
                             };
                             let fork_outcome = self.run_inner(ctx, fork_state)?;
                             if fork_outcome.stopped {
@@ -324,6 +326,7 @@ mod tests {
             ],
             corpus: std::collections::HashMap::new(),
             max_turns: std::num::NonZeroUsize::new(10).expect("turn limit is non-zero"),
+            max_recoveries: 3,
         };
 
         let results = driver.run(&mut ctx, state).unwrap();
@@ -371,6 +374,7 @@ mod tests {
                 },
             ],
             std::num::NonZeroUsize::new(5).expect("turn limit is non-zero"),
+            3,
         );
 
         let results = driver.run(&mut ctx, state).expect("run should succeed");
@@ -413,6 +417,7 @@ mod tests {
                 model: None,
             }],
             std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
+            3,
         );
 
         let error = driver
@@ -447,6 +452,7 @@ mod tests {
                 model: None,
             }],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
+            1,
         );
 
         let results = driver
@@ -482,6 +488,7 @@ mod tests {
                 model: None,
             }],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
+            3,
         );
 
         let results = driver.run(&mut ctx, state).expect("run should succeed");
@@ -541,6 +548,7 @@ mod tests {
                 },
             ],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
+            3,
         );
 
         let results = driver.run(&mut ctx, state).expect("run should succeed");
@@ -583,6 +591,7 @@ mod tests {
                 model: None,
             }],
             std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
+            3,
         );
 
         let results = driver.run(&mut ctx, state).expect("stop should be clean");
@@ -624,6 +633,7 @@ mod tests {
                 },
             ],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
+            3,
         );
 
         let error = driver

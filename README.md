@@ -102,6 +102,7 @@ A pipeline is an ordered list of inline or file-backed Aspects:
 ```toml
 [pipeline]
 max_turns = 30
+max_recoveries = 3
 
 [[pipeline.aspects]]
 id = "requirements"
@@ -127,9 +128,11 @@ prompt = "Return the final answer with DONE."
 ```
 
 Aspects default to `type = "worker"`; only human gates need `type = "gate"`.
-`max_turns` defaults to 100 and is shared by the root execution and every fork. A Worker
-may revisit itself with `SET`, route to an `ASPECT` target with `JUMP`, or launch isolated
-work with `FORK`, but the Rust driver remains responsible for every transition.
+`max_turns` defaults to 100 and is shared by the root execution and every fork.
+`max_recoveries` defaults to 3 and limits formatter-recovery calls across that same run;
+set it to 0 to disable recovery. A Worker may revisit itself with `SET`, route to an
+`ASPECT` target with `JUMP`, or launch isolated work with `FORK`, but the Rust driver
+remains responsible for every transition.
 
 The checked-in pipelines under [`tests/pipelines/`](tests/pipelines/) are small executable
 examples of knowledge relay, replacement, fork/join synthesis, arithmetic, and larger

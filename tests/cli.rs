@@ -10,7 +10,15 @@ fn write_test_llm(dir: &Path) -> std::path::PathBuf {
 set -euo pipefail
 prompt="${1:-}"
 
-if [[ "$prompt" == *"Current Aspect**: Seed Knowledge"* ]]; then
+if [[ "$prompt" == *"Bad Response:"* && "$prompt" == *"bad-first"* ]]; then
+  printf 'CONTINUE\n'
+elif [[ "$prompt" == *"Bad Response:"* && "$prompt" == *"bad-second"* ]]; then
+  printf 'DONE recovery budget was not enforced\n'
+elif [[ "$prompt" == *"Current Aspect**: First Recovery"* ]]; then
+  printf 'bad-first\n'
+elif [[ "$prompt" == *"Current Aspect**: Second Recovery"* ]]; then
+  printf 'bad-second\n'
+elif [[ "$prompt" == *"Current Aspect**: Seed Knowledge"* ]]; then
   if [[ "$prompt" == *"KNOWLEDGE TOKEN quartz-17"* ]]; then
     printf 'CONTINUE\n'
   else
@@ -223,4 +231,16 @@ fn cli_joins_characters_into_a_story() {
     for character in ["Lyra", "Orin", "Vex"] {
         assert!(stdout.contains(character), "story omitted {character}");
     }
+}
+
+#[test]
+fn cli_limits_recovery_calls_across_aspects() {
+    let output = run_pipeline(
+        "tests/pipelines/recovery-budget.toml",
+        "Exercise the shared recovery budget",
+    );
+
+    assert!(!output.status.success(), "second recovery should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("max_recoveries limit of 1"), "{stderr}");
 }

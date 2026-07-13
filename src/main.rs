@@ -70,7 +70,12 @@ fn main() -> Result<()> {
             let pipeline = config.load_pipeline(&ctx, pipeline_file)?;
             let pipeline = config.resolve_pipeline(&ctx, &pipeline)?;
 
-            let state = PipelineState::new(request, pipeline.aspects, pipeline.max_turns);
+            let state = PipelineState::new(
+                request,
+                pipeline.aspects,
+                pipeline.max_turns,
+                pipeline.max_recoveries,
+            );
             let mut ctx = state::SessionContext::new();
 
             let client = llm::ConfigurableLlmClient {

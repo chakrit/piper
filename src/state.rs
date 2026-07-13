@@ -5,11 +5,15 @@ use std::num::NonZeroUsize;
 
 pub struct SessionContext {
     turns_taken: usize,
+    recoveries_taken: usize,
 }
 
 impl SessionContext {
     pub fn new() -> Self {
-        Self { turns_taken: 0 }
+        Self {
+            turns_taken: 0,
+            recoveries_taken: 0,
+        }
     }
 
     pub fn consume_turn(&mut self, max_turns: NonZeroUsize) -> Result<()> {
@@ -18,6 +22,18 @@ impl SessionContext {
         }
 
         self.turns_taken += 1;
+        Ok(())
+    }
+
+    pub fn consume_recovery(&mut self, max_recoveries: usize) -> Result<()> {
+        if self.recoveries_taken >= max_recoveries {
+            anyhow::bail!(
+                "Pipeline exceeded its max_recoveries limit of {}",
+                max_recoveries
+            );
+        }
+
+        self.recoveries_taken += 1;
         Ok(())
     }
 }
@@ -38,10 +54,16 @@ pub struct PipelineState {
     pub aspects: Vec<Aspect>,
     pub corpus: HashMap<String, String>,
     pub max_turns: NonZeroUsize,
+    pub max_recoveries: usize,
 }
 
 impl PipelineState {
-    pub fn new(request: String, aspects: Vec<Aspect>, max_turns: NonZeroUsize) -> Self {
+    pub fn new(
+        request: String,
+        aspects: Vec<Aspect>,
+        max_turns: NonZeroUsize,
+        max_recoveries: usize,
+    ) -> Self {
         Self {
             fork_id: None,
             fork_prompt: None,
@@ -52,6 +74,7 @@ impl PipelineState {
             aspects,
             corpus: HashMap::new(),
             max_turns,
+            max_recoveries,
         }
     }
 

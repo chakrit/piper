@@ -3,6 +3,8 @@
 [pipeline]
 # Shared by the root pipeline and every work-stream fork.
 max_turns = 48
+# Formatting recovery is exceptional and shares one smaller run-wide budget.
+max_recoveries = 3
 
 [[pipeline.aspects]]
 id = "clarify"

@@ -24,6 +24,7 @@ Put the ordered work in a separate pipeline file:
 ```toml
 [pipeline]
 max_turns = 8
+max_recoveries = 2
 
 [[pipeline.aspects]]
 id = "constraints"
@@ -211,12 +212,15 @@ controls. Gates do not mutate the Request or Corpus.
 single budget. Every Worker pass consumes one turn, including the pass after `SET`, each
 parent pass that launches or observes forks, and child passes. Gates consume no turns. A
 one-shot parser-recovery call belongs to the failed pass and does not consume an additional
-turn.
+turn, but it consumes the shared `max_recoveries` budget. That budget defaults to `3`; set
+it to `0` to disable recovery.
 
 Count the intended happy-path passes, include replacement loops and every fork, then leave
-a small allowance for legitimate conditional routing. Keep the limit low enough that a
-Worker repeatedly setting, jumping, or forking fails promptly. A three-fork pipeline often
-needs substantially more turns than its two configured Aspects suggest.
+a small allowance for legitimate conditional routing. Keep the turn limit low enough that
+a Worker repeatedly setting, jumping, or forking fails promptly. Keep `max_recoveries`
+much lower: recovery is for occasional formatting errors, not a normal second call on each
+pass. A three-fork pipeline often needs substantially more turns than its two configured
+Aspects suggest.
 
 ## Test information flow, not just completion
 

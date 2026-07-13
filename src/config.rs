@@ -35,11 +35,13 @@ impl Default for LlmConfig {
 }
 
 pub const DEFAULT_MAX_TURNS: usize = 100;
+pub const DEFAULT_MAX_RECOVERIES: usize = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Pipeline {
     pub max_turns: usize,
+    pub max_recoveries: usize,
     pub aspects: Vec<AspectStep>,
 }
 
@@ -53,6 +55,7 @@ impl Default for Pipeline {
     fn default() -> Self {
         Self {
             max_turns: DEFAULT_MAX_TURNS,
+            max_recoveries: DEFAULT_MAX_RECOVERIES,
             aspects: Vec::new(),
         }
     }
@@ -61,6 +64,7 @@ impl Default for Pipeline {
 pub struct ResolvedPipeline {
     pub aspects: Vec<Aspect>,
     pub max_turns: NonZeroUsize,
+    pub max_recoveries: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -151,6 +155,7 @@ impl Config {
         Ok(ResolvedPipeline {
             aspects: resolved,
             max_turns,
+            max_recoveries: pipeline.max_recoveries,
         })
     }
 }
@@ -337,6 +342,7 @@ mod tests {
             "test".to_string(),
             Pipeline {
                 max_turns: 0,
+                max_recoveries: DEFAULT_MAX_RECOVERIES,
                 aspects: Vec::new(),
             },
         );
@@ -368,7 +374,21 @@ mod tests {
         .expect("pipeline file should parse");
 
         assert_eq!(pipeline.max_turns, 4);
+        assert_eq!(pipeline.max_recoveries, DEFAULT_MAX_RECOVERIES);
         assert_eq!(pipeline.aspects.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_pipeline_allows_disabling_recovery() {
+        let pipeline = Config::parse_pipeline(
+            r#"
+                [pipeline]
+                max_recoveries = 0
+            "#,
+        )
+        .expect("zero recovery budget should parse");
+
+        assert_eq!(pipeline.max_recoveries, 0);
     }
 
     #[test]

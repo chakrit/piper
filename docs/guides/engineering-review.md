@@ -31,6 +31,7 @@ Save the following as `engineering-review.toml`:
 ```toml
 [pipeline]
 max_turns = 24
+max_recoveries = 3
 
 [[pipeline.aspects]]
 id = "requirements"
@@ -218,9 +219,10 @@ That is 16 Worker turns. A limit of 24 leaves room for a deliberate replacement 
 without making an accidental loop effectively unbounded. Tune the limit from the intended
 command path, including every fork and every expected `SET` rerun.
 
-If a first Worker response is malformed, Piper makes one formatter-recovery call. That call
-belongs to the same Worker pass and does not consume an additional turn. A second malformed
-response fails the run.
+If a first Worker response is malformed, Piper may make one formatter-recovery call. That
+call belongs to the same Worker pass and does not consume an additional turn, but it uses
+the shared `max_recoveries` budget. A malformed recovery response fails the run, and Piper
+fails before any recovery call beyond the configured budget.
 
 ## Validate the pipeline before trusting it
 

@@ -37,6 +37,8 @@ Order Aspects so dependent analysis follows the knowledge it needs:
   `DONE <result>` for a completed final synthesis.
 - **Bounded execution**: Set `max_turns` high enough for intentional `SET` loops and forks,
   but low enough to stop a malformed or indecisive run.
+- **Bounded recovery**: Keep `max_recoveries` much lower than `max_turns`. Recovery repairs
+  occasional formatting mistakes; it must not become the normal execution path.
 
 ## Design workflow
 

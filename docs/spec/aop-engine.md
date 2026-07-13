@@ -30,30 +30,34 @@ that set it. Workers never supply arbitrary knowledge keys.
 ## State and execution
 
 `PipelineState` contains the Request, ordered Aspects, current position, Corpus,
-current branch scope, optional fork directive, and a non-zero turn limit. A
-`SessionContext` is shared by the root pipeline and every fork and tracks the total number
-of Worker calls.
+current branch scope, optional fork directive, a non-zero turn limit, and a recovery limit.
+A `SessionContext` is shared by the root pipeline and every fork and tracks total Worker
+calls and recovery calls.
 
 For a `worker`, the driver loads `aspect-worker.md`, substitutes the template variables,
 calls the configured LLM, parses one command, and applies it. A `gate` pauses for a human
 to continue or abort; it cannot alter the Request.
 
-Every Worker pass consumes one turn. Its one permitted recovery call, when needed, is part
-of that pass and does not consume an additional turn. The shared `max_turns` limit prevents
-unbounded jump and fork loops; reaching it fails the run before another Worker pass. Gates
-do not consume turns.
+Every Worker pass consumes one turn. A formatter-recovery call, when needed, is part of
+that pass and does not consume an additional turn, but it consumes the separate shared
+recovery budget. The shared `max_turns` limit prevents unbounded jump and fork loops;
+reaching it fails the run before another Worker pass. The shared `max_recoveries` limit
+prevents a long run from repairing malformed output on every pass. Gates consume neither
+budget.
 
-If the first response cannot be parsed as one DSL command, the driver makes one recovery
-call using `aspect-recover.md`. A recovery response that is still invalid fails the run.
+If the first response cannot be parsed as one DSL command and recovery budget remains, the
+driver makes one recovery call using `aspect-recover.md`. A recovery response that is still
+invalid fails the run. Reaching the recovery limit fails before another recovery call.
 
 ## Pipeline configuration
 
 Shared configuration and pipelines live in separate TOML files. `piper.toml` contains
 runtime configuration such as `[llm]`. A pipeline file contains one `[pipeline]` table.
 Piper loads both files, merges the pipeline into the loaded configuration, and processes
-the resulting effective configuration. `max_turns` is optional and defaults to `100`; it
-must be at least one. Aspects default to `worker`; set `type = "gate"` only for gate
-Aspects.
+the resulting effective configuration. `max_turns` is optional, defaults to `100`, and
+must be at least one. `max_recoveries` is optional, defaults to `3`, and may be `0` to
+disable recovery. Both budgets are shared by root and fork execution. Aspects default to
+`worker`; set `type = "gate"` only for gate Aspects.
 
 ```toml
 [llm]
@@ -63,6 +67,7 @@ default_model = "cerebras/gemma-4-31b"
 
 [pipeline]
 max_turns = 50
+max_recoveries = 3
 
 [[pipeline.aspects]]
 id = "spec-align"

@@ -1,0 +1,13 @@
+[pipeline]
+max_turns = 3
+max_recoveries = 1
+
+[[pipeline.aspects]]
+id = "first"
+name = "First Recovery"
+prompt = "Return a command after one formatting mistake."
+
+[[pipeline.aspects]]
+id = "second"
+name = "Second Recovery"
+prompt = "Make another formatting mistake so the shared recovery budget is exceeded."
