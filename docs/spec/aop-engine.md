@@ -1,39 +1,38 @@
 # AOP Engine Specification
 
 - **Status:** implemented
-- **Scope:** Piper's driver, pipeline configuration, prompt templates, and Worker Lens protocol.
+- **Scope:** Piper's driver, pipeline configuration, prompt templates, and Worker protocol.
 
 ## Purpose
 
-Piper reduces instruction drift by sending a draft through small, ordered Aspect lenses.
-Each lens returns one machine-readable DSL command, and the driver applies that command to
-the current pipeline state. The driver never performs an implicit synthesis pass; a
-pipeline that needs a final review models it as a normal Aspect.
+Piper clarifies an immutable Request through small, ordered Aspect lenses. Each Worker
+consumes the Request and the current Corpus, then emits one machine-readable DSL command.
+Workers add durable Knowledge to the Corpus; they never rewrite the Request. A pipeline
+that needs a final synthesis models it as an explicit Aspect and terminates with `DONE`.
 
 ## State and execution
 
-`PipelineState` contains the working draft, original goal, ordered Aspects, current
-position, corpus, optional fork ID and prompt, and a non-zero turn limit. A `SessionContext`
-is shared by the root pipeline and every fork. It records completed fork results, completed
-fork corpora, and the total number of Worker Lens calls.
+`PipelineState` contains the Request, goal, ordered Aspects, current position, Corpus,
+optional fork ID and prompt, and a non-zero turn limit. A `SessionContext` is shared by the
+root pipeline and every fork. It records completed fork Corpora and the total number of
+Worker calls.
 
 The normal transition is:
 
-`INPUT → ASPECT_1 → … → ASPECT_N → OUTPUT`
+`REQUEST + ASPECT + CORPUS → ADDITIONAL CORPUS`
 
-For a `refiner`, the driver loads `aspect-refiner.md`, substitutes the template variables,
-calls the configured LLM, parses its one command, then applies it. `REFINE` and `MERGE`
+For a `worker`, the driver loads `aspect-worker.md`, substitutes the template variables,
+calls the configured LLM, parses its one command, then applies it. `NEXT` and `MERGE`
 advance to the next Aspect; `JUMP` and `DONE` control flow explicitly. A `gate` instead
-pauses for a human to continue, edit the draft, or abort.
+pauses for a human to continue or abort; it cannot alter the Request.
 
-Every refiner pass consumes one turn. Its one permitted recovery call, when needed, is part
+Every Worker pass consumes one turn. Its one permitted recovery call, when needed, is part
 of that pass and does not consume an additional turn. The shared `max_turns` limit prevents
-unbounded jump and fork loops; reaching it fails the run before another refiner pass. Gates
+unbounded jump and fork loops; reaching it fails the run before another Worker pass. Gates
 do not consume turns.
 
-If the first response cannot be parsed as one DSL command, the driver makes one
-recovery call using `aspect-recover.md`. A recovery response that is still invalid fails
-the run.
+If the first response cannot be parsed as one DSL command, the driver makes one recovery
+call using `aspect-recover.md`. A recovery response that is still invalid fails the run.
 
 ## Pipeline configuration
 
@@ -52,8 +51,8 @@ max_turns = 50
 [[pipelines.rigour.aspects]]
 id = "spec-align"
 name = "Spec Alignment"
-type = "refiner"
-prompt = "Ensure the draft matches accepted specifications."
+type = "worker"
+prompt = "Record requirements that must be met."
 model = "optional-model-override"
 
 [[pipelines.rigour.aspects]]
@@ -70,36 +69,36 @@ An aspect entry may instead reference a TOML file:
 file = "aspects/spec-align.toml"
 ```
 
-The `run` command accepts a pipeline name, `--goal`, `--draft`, and an optional `--prompts`
-directory. Its default prompt directory is `prompts`. `--file` selects the
+The `run` command accepts a pipeline name, `--goal`, `--request`, and an optional
+`--prompts` directory. Its default prompt directory is `prompts`. `--file` selects the
 configuration file and defaults to `piper.toml`.
 
-## Worker Lens DSL
+## Worker DSL
 
-Every refiner response is exactly one non-empty line. It has one uppercase verb and its
+Every Worker response is exactly one non-empty line. It has one uppercase verb and its
 arguments, separated by whitespace. One final newline is allowed; Markdown fences, JSON,
 leading or trailing whitespace, and additional lines are rejected. IDs and knowledge keys
 match `[A-Za-z0-9_-]+`. Text arguments are the non-empty remainder of the line.
 
 ```text
-REFINE Updated draft
+NEXT
 ADD-KNOWLEDGE spec-align Preserve API compatibility
 UPDATE-KNOWLEDGE spec-align Preserve the stable API
 JUMP review
 FORK alternative-1 Explore the implementation option
 MERGE alternative-1,alternative-2
-DONE Final output
+DONE Final result
 ```
 
 | Command | Arguments | Effect |
 | --- | --- | --- |
-| `REFINE` | `<draft>` | Replaces the draft and advances to the next Aspect. |
+| `NEXT` | none | Advances to the next Aspect without changing the Request. |
 | `ADD-KNOWLEDGE` | `<key> <value>` | Adds a previously absent key, then re-runs this Aspect. |
 | `UPDATE-KNOWLEDGE` | `<key> <value>` | Replaces an existing key, then re-runs this Aspect. |
 | `JUMP` | `<aspect-id>` | Transfers control to the named Aspect. |
-| `FORK` | `<fork-id> <prompt>` | Runs a child from the next Aspect with the current draft and goal, then re-runs this Aspect. |
-| `MERGE` | `<fork-id>[,<fork-id>...]` | Incorporates completed child outputs and corpora, then advances. |
-| `DONE` | `<final-draft>` | Replaces the draft and returns it immediately. |
+| `FORK` | `<fork-id> <prompt>` | Runs a child from the next Aspect with the same Request, goal, and Corpus, then re-runs this Aspect. |
+| `MERGE` | `<fork-id>[,<fork-id>...]` | Incorporates completed child Corpus entries, then advances. |
+| `DONE` | `<final-result>` | Returns a final Result immediately. |
 
 The driver rejects an unknown verb, malformed arguments, duplicate IDs in one `MERGE`, a
 duplicate fork ID, a fork from the final Aspect, an unknown or incomplete merge target,
@@ -107,17 +106,15 @@ duplicate fork ID, a fork from the final Aspect, an unknown or incomplete merge 
 
 ## Corpus and forks
 
-The corpus is a map of durable constraints injected into every later refiner prompt. Root
+The Corpus is a map of durable Knowledge injected into every later Worker prompt. Root
 pipeline keys are written as provided. A fork automatically writes each of its keys under
 `fork-id/key`, for example `alternative/tdd-red`. This prevents sibling and parent
 collisions while keeping provenance visible.
 
-A fork begins with a copy of the parent corpus and starts at the Aspect immediately after
-the `FORK` command. The fork prompt is injected into its Worker Lens prompt. When a parent
-runs `MERGE`, the driver's
-current implementation appends the fork's final draft under a labeled delimiter and copies
-the fork's corpus entries into the parent corpus. Because fork-owned keys are namespaced,
-only an explicit merge makes their new discoveries available to later parent Aspects.
+A fork begins with a copy of the parent Corpus and starts at the Aspect immediately after
+the `FORK` command. The fork prompt is injected into its Worker prompt. When a parent runs
+`MERGE`, the driver copies the fork's Corpus entries into the parent Corpus. Only an
+explicit merge makes a fork's discoveries available to later parent Aspects.
 
 Forks execute synchronously and recursively. A fork can itself fork or merge, subject to
 the same shared turn limit.
@@ -126,15 +123,10 @@ the same shared turn limit.
 
 | Template | Role | Variables |
 | --- | --- | --- |
-| `aspect-refiner.md` | Worker Lens request | `aspect_name`, `aspect_id`, `aspect_prompt`, `current_draft`, `goal`, `fork_prompt`, `corpus` |
+| `aspect-worker.md` | Worker request | `aspect_name`, `aspect_id`, `aspect_prompt`, `request`, `goal`, `fork_prompt`, `context` |
 | `aspect-recover.md` | One-shot formatter recovery | The rejected raw response is appended by the driver. |
-
-`final-alignment.md` is intentionally absent. Final alignment is an ordinary, explicit
-Aspect when a pipeline requires it.
 
 ## Known limitations
 
-- A merge concatenates output; it does not semantically reconcile divergent drafts. Use a
-  later refiner Aspect to synthesize branches when needed.
 - The LLM invocation is split on whitespace, so command templates cannot safely express
   shell-style quoting. The invocation must include `{{prompt}}`; `{{model}}` is optional.

@@ -10,5 +10,5 @@ max_turns = 1
 [[pipelines.smoke.aspects]]
 id = "smoke"
 name = "Smoke Test"
-type = "refiner"
-prompt = "Return exactly this one line: REFINE Piper smoke test passed."
+type = "worker"
+prompt = "Return exactly this one line: DONE Piper smoke test passed."

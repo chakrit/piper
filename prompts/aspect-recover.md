@@ -6,13 +6,13 @@ command. Convert it into exactly one valid command line and preserve its intende
 The required shape is:
 
 ```text
-REFINE updated draft
+NEXT
 ADD-KNOWLEDGE key durable constraint
 UPDATE-KNOWLEDGE key corrected constraint
 JUMP aspect-id
 FORK fork-id branch directive
 MERGE fork-id,other-fork-id
-DONE final draft
+DONE final result
 ```
 
 Return only one command line, with no Markdown fence or commentary.

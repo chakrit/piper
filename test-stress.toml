@@ -6,17 +6,17 @@ default_model = "cerebras/gemma-4-31b"
 [[pipelines.stress.aspects]]
 id = "start"
 name = "Start Aspect"
-type = "refiner"
+type = "worker"
 prompt = "Return exactly this one line: JUMP end"
 
 [[pipelines.stress.aspects]]
 id = "middle"
 name = "Middle Aspect"
-type = "refiner"
+type = "worker"
 prompt = "You should not be seen."
 
 [[pipelines.stress.aspects]]
 id = "end"
 name = "End Aspect"
-type = "refiner"
-prompt = "Return exactly this one line: REFINE Jumped"
+type = "worker"
+prompt = "Return exactly this one line: DONE Jumped"

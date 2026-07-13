@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 pub struct SessionContext {
-    pub fork_results: HashMap<String, String>,
     pub fork_corpora: HashMap<String, HashMap<String, String>>,
     turns_taken: usize,
 }
@@ -12,7 +11,6 @@ pub struct SessionContext {
 impl SessionContext {
     pub fn new() -> Self {
         Self {
-            fork_results: HashMap::new(),
             fork_corpora: HashMap::new(),
             turns_taken: 0,
         }
@@ -31,8 +29,8 @@ impl SessionContext {
 pub struct PipelineState {
     pub fork_id: Option<String>,
     pub fork_prompt: Option<String>,
-    pub working_draft: String,
-    pub original_goal: String,
+    pub request: String,
+    pub goal: String,
     pub current_index: usize,
     pub aspects: Vec<Aspect>,
     pub corpus: HashMap<String, String>,
@@ -41,16 +39,16 @@ pub struct PipelineState {
 
 impl PipelineState {
     pub fn new(
-        working_draft: String,
-        original_goal: String,
+        request: String,
+        goal: String,
         aspects: Vec<Aspect>,
         max_turns: NonZeroUsize,
     ) -> Self {
         Self {
             fork_id: None,
             fork_prompt: None,
-            working_draft,
-            original_goal,
+            request,
+            goal,
             current_index: 0,
             aspects,
             corpus: HashMap::new(),

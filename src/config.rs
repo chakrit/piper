@@ -122,7 +122,7 @@ mod tests {
                 aspects: vec![AspectStep::Inline(Aspect {
                     id: "1".to_string(),
                     name: "N1".to_string(),
-                    aspect_type: crate::models::AspectType::Refiner,
+                    aspect_type: crate::models::AspectType::Worker,
                     prompt: "D1".to_string(),
                     model: None,
                 })],
@@ -151,7 +151,7 @@ mod tests {
         let aspect_toml = r#"
             id = "ref-1"
             name = "Refined"
-            type = "refiner"
+            type = "worker"
             prompt = "Desc"
         "#;
         std::fs::write(&aspect_path, aspect_toml).unwrap();
@@ -195,7 +195,7 @@ mod tests {
                 aspects: vec![AspectStep::Inline(Aspect {
                     id: "1".to_string(),
                     name: "N1".to_string(),
-                    aspect_type: crate::models::AspectType::Refiner,
+                    aspect_type: crate::models::AspectType::Worker,
                     prompt: "D1".to_string(),
                     model: Some("custom-model".to_string()),
                 })],

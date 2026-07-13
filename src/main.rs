@@ -7,6 +7,7 @@ use std::path::PathBuf;
 mod actions;
 mod config;
 mod driver;
+mod dsl;
 mod llm;
 mod models;
 mod state;
@@ -38,9 +39,9 @@ enum Commands {
         #[arg(short, long)]
         goal: String,
 
-        /// The initial draft of the content
+        /// The immutable request to analyze
         #[arg(short, long)]
-        draft: String,
+        request: String,
 
         /// Directory containing prompt templates
         #[arg(short, long, default_value = "prompts")]
@@ -62,10 +63,10 @@ fn main() -> Result<()> {
                 "default".to_string(),
                 config::Pipeline {
                     aspects: vec![config::AspectStep::Inline(crate::models::Aspect {
-                        id: "refiner-1".to_string(),
-                        name: "Initial Refiner".to_string(),
-                        aspect_type: crate::models::AspectType::Refiner,
-                        prompt: "A basic refiner to get started".to_string(),
+                        id: "worker-1".to_string(),
+                        name: "Initial Worker".to_string(),
+                        aspect_type: crate::models::AspectType::Worker,
+                        prompt: "A basic worker to get started".to_string(),
                         model: None,
                     })],
                     ..Default::default()
@@ -84,13 +85,13 @@ fn main() -> Result<()> {
         Commands::Run {
             pipeline_name,
             goal,
-            draft,
+            request,
             prompts,
         } => {
             let config = config::Config::load(&ctx, cli.config_file)?;
             let pipeline = config.resolve_pipeline(&ctx, &pipeline_name)?;
 
-            let state = PipelineState::new(draft, goal, pipeline.aspects, pipeline.max_turns);
+            let state = PipelineState::new(request, goal, pipeline.aspects, pipeline.max_turns);
             let mut ctx = state::SessionContext::new();
 
             let client = llm::ConfigurableLlmClient {
