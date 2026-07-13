@@ -143,6 +143,7 @@ fn run_pipeline(pipeline: &str, request: &str) -> std::process::Output {
             format!("{} {{{{prompt}}}}", llm.display()),
         )
         .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")
+        .env("XDG_STATE_HOME", temp_dir.path().join("state"))
         .output()
         .expect("piper CLI should run")
 }
@@ -173,6 +174,7 @@ fn cli_runs_pipeline_incrementally() {
             format!("{} {{{{prompt}}}}", llm.display()),
         )
         .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")
+        .env("XDG_STATE_HOME", temp_dir.path().join("state"))
         .output()
         .expect("piper CLI should run");
 
@@ -188,6 +190,46 @@ fn cli_runs_pipeline_incrementally() {
     assert!(stdout.contains("Processing: Branch Work"));
     assert!(stdout.contains("[Fork: f1]"));
     assert!(stdout.contains("Black-box success"));
+}
+
+#[test]
+fn cli_discovers_config_from_nearest_ancestor() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let project = temp_dir.path().join("project");
+    let nested = project.join("nested/worktree");
+    fs::create_dir_all(&nested).expect("nested working directory should be created");
+    fs::write(
+        project.join("piper.toml"),
+        r#"[llm]
+invocation = "${PIPER_LLM_INVOCATION}"
+system_prompt = "You are a precise test worker."
+default_model = "${PIPER_DEFAULT_MODEL}"
+"#,
+    )
+    .expect("project config should be written");
+    let llm = write_test_llm(temp_dir.path());
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let pipeline = repository.join("tests/pipelines/knowledge-relay.toml");
+    let prompts = repository.join("prompts");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_piper"))
+        .current_dir(&nested)
+        .arg("run")
+        .arg(pipeline)
+        .arg("Relay an independently derived token")
+        .arg("--prompts")
+        .arg(prompts)
+        .env(
+            "PIPER_LLM_INVOCATION",
+            format!("{} {{{{prompt}}}}", llm.display()),
+        )
+        .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")
+        .env("XDG_STATE_HOME", temp_dir.path().join("state"))
+        .output()
+        .expect("piper CLI should run");
+
+    assert_success(&output);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("RELAY quartz-17"));
 }
 
 #[test]

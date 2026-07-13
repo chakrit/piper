@@ -13,15 +13,15 @@ mod llm;
 mod models;
 mod state;
 
-use actions::{AppContext, WriteConfig};
+use actions::{AppContext, EnsureProject, ResolveProject, WriteConfig};
 use driver::Driver;
 use state::PipelineState;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    #[arg(short = 'f', long = "file", default_value = "piper.toml")]
-    config_file: PathBuf,
+    #[arg(short = 'f', long = "file")]
+    config_file: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
@@ -51,23 +51,38 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Init => {
+            let config_file = cli
+                .config_file
+                .unwrap_or_else(|| PathBuf::from("piper.toml"));
             let mut config = config::Config::default();
             config.llm.invocation = "gpt-4o {{prompt}}".to_string();
 
             let toml_string = toml::to_string_pretty(&config)?;
             let action = WriteConfig {
-                path: cli.config_file.clone(),
+                path: config_file.clone(),
                 content: toml_string,
             };
             action.run(&ctx)?;
-            println!("Created {:?} with default settings.", cli.config_file);
+            println!("Created {:?} with default settings.", config_file);
         }
         Commands::Run {
             pipeline_file,
             request,
             prompts,
         } => {
-            let config = config::Config::load(&ctx, cli.config_file)?;
+            let cwd = std::env::current_dir()?;
+            let project = ResolveProject {
+                config: cli.config_file,
+                cwd,
+            }
+            .run(&ctx)?;
+            EnsureProject {
+                directory: project.state_dir,
+                canonical_root: project.root,
+                configuration_path: project.config.clone(),
+            }
+            .run(&ctx)?;
+            let config = config::Config::load(&ctx, project.config)?;
             let pipeline = config.load_pipeline(&ctx, pipeline_file)?;
             let pipeline = config.resolve_pipeline(&ctx, &pipeline)?;
 
