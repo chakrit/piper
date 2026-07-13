@@ -96,6 +96,7 @@ leading or trailing whitespace, and additional lines are rejected. IDs match
 ```text
 SET Preserve public API compatibility.
 CONTINUE
+JOIN
 JUMP review
 FORK alternative-1 Explore migration risk.
 STOP Missing security requirements.
@@ -105,7 +106,8 @@ DONE Final readiness assessment.
 | Command | Arguments | Effect |
 | --- | --- | --- |
 | `SET` | `<knowledge>` | Sets the current Worker's contribution in its current branch, then re-runs that Worker. It creates the contribution when absent and replaces it when present. |
-| `CONTINUE` | none | With no forks from the current Worker, advances to the next Aspect. With completed forks, automatically joins their Corpora, clears that Worker's fork history, then advances. |
+| `CONTINUE` | none | Alias of `JOIN`. Joins any completed child Corpora first. In the root run, advances to the next Aspect; in a fork, returns the branch Corpus to its parent. |
+| `JOIN` | none | Alias of `CONTINUE`. Joins any completed child Corpora first. In the root run, advances to the next Aspect; in a fork, returns the branch Corpus to its parent. |
 | `JUMP` | `<aspect-id>` | Transfers control to an `ASPECT` target. It is invalid while the current Worker has unjoined forks. |
 | `FORK` | `<fork-id> <directive>` | Runs an isolated child from the next Aspect with the same Request, Goal, and starting Corpus. The child completes before the parent Worker runs again. |
 | `STOP` | `<reason>` | Stops the entire run cleanly without a final Result. A child `STOP` stops its parent run as well. |
@@ -114,7 +116,7 @@ DONE Final readiness assessment.
 The driver rejects unknown verbs, malformed arguments, duplicate fork IDs from one Worker,
 a fork from the final Aspect, and `JUMP`, `STOP`, or `DONE` that would discard unjoined fork
 work. `SET` is the sole knowledge mutation command; `ADD-KNOWLEDGE`, `UPDATE-KNOWLEDGE`,
-`NEXT`, and explicit `MERGE` are not part of this protocol.
+`NEXT`, and `MERGE` are not part of this protocol.
 
 ## Corpus context
 
@@ -141,19 +143,21 @@ fork history if it creates further forks.
 A fork is a branch, not a namespace the Worker must manage.
 
 1. A Worker emits `FORK alternative-1 Explore migration risk.`
-2. The driver runs that child synchronously from the next Aspect with a copy of the parent
-   Corpus. The child accumulates its own additional knowledge and completes by reaching the
-   end of its pipeline or emitting `DONE`.
-3. The driver retains the completed child Corpus and returns to the parent Worker. It adds a
+2. The driver runs that child synchronously at the next Aspect with a copy of the parent
+   Corpus. The child may use `SET` repeatedly to establish or replace its contribution.
+3. The child emits `CONTINUE` or `JOIN`. Both commands join any completed descendants and
+   return the branch Corpus to its parent instead of advancing the child to another Aspect.
+4. The driver retains the completed child Corpus and returns to the parent Worker. It adds a
    `FORK alternative-1 …` history directive to the parent prompt, but does not yet expose
    the child Corpus as parent knowledge.
-4. The parent may create more forks. It must eventually emit `CONTINUE`.
-5. `CONTINUE` automatically joins every completed child Corpus into the parent Corpus and
-   advances to the next Aspect.
+5. The parent may create more forks. It eventually emits either `CONTINUE` or `JOIN`.
+6. The command waits for all child work, joins every completed child Corpus into the parent
+   Corpus, clears the fork history, and advances the root run to the next Aspect.
 
-This makes `CONTINUE` the join barrier. Later Aspects never start before all child work is
-complete and joined. Selective or partial merges are deliberately deferred until there is a
-concrete need for them.
+`CONTINUE` and `JOIN` are two names for the same context-sensitive transition, not separate
+execution choices. A Worker may use whichever verb best expresses its perspective. Later
+root Aspects never start before all child work is complete and joined. Selective or partial
+merges are deliberately deferred until there is a concrete need for them.
 
 ## Templates
 
