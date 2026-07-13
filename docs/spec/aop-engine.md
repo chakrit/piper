@@ -1,30 +1,43 @@
 # AOP Engine Specification
 
-- **Status:** implemented
+- **Status:** accepted
 - **Scope:** Piper's driver, pipeline configuration, prompt templates, and Worker protocol.
 
 ## Purpose
 
 Piper clarifies an immutable Request through small, ordered Aspect lenses. Each Worker
-consumes the Request and the current Corpus, then emits one machine-readable DSL command.
-Workers add durable Knowledge to the Corpus; they never rewrite the Request. A pipeline
-that needs a final synthesis models it as an explicit Aspect and terminates with `DONE`.
-
-## State and execution
-
-`PipelineState` contains the Request, goal, ordered Aspects, current position, Corpus,
-optional fork ID and prompt, and a non-zero turn limit. A `SessionContext` is shared by the
-root pipeline and every fork. It records completed fork Corpora and the total number of
-Worker calls.
+consumes the Request and current Corpus, then emits one machine-readable DSL command. A
+Worker contributes knowledge; it never rewrites the Request. Later Aspects consume the
+expanded Corpus, and a pipeline that needs a final synthesis terminates explicitly with
+`DONE`.
 
 The normal transition is:
 
-`REQUEST + ASPECT + CORPUS → ADDITIONAL CORPUS`
+`REQUEST + ASPECT + CORPUS → CONTRIBUTION TO CORPUS`
+
+## Core concepts
+
+- **Request** — immutable original user input.
+- **Goal** — desired outcome for the run.
+- **Aspect** — a named perspective or question applied to the Request.
+- **Worker** — the LLM-run stage that applies one Aspect.
+- **Corpus** — durable knowledge contributed by Workers and fed to later Workers.
+- **Result** — explicit final synthesis returned by `DONE`.
+- **Fork** — an isolated child execution branch with its own temporary Corpus.
+
+Each contribution is identified internally by the branch that produced it and the Aspect
+that set it. Workers never supply arbitrary knowledge keys.
+
+## State and execution
+
+`PipelineState` contains the Request, Goal, ordered Aspects, current position, Corpus,
+current branch scope, optional fork directive, and a non-zero turn limit. A
+`SessionContext` is shared by the root pipeline and every fork and tracks the total number
+of Worker calls.
 
 For a `worker`, the driver loads `aspect-worker.md`, substitutes the template variables,
-calls the configured LLM, parses its one command, then applies it. `NEXT` and `MERGE`
-advance to the next Aspect; `JUMP` and `DONE` control flow explicitly. A `gate` instead
-pauses for a human to continue or abort; it cannot alter the Request.
+calls the configured LLM, parses one command, and applies it. A `gate` pauses for a human
+to continue or abort; it cannot alter the Request.
 
 Every Worker pass consumes one turn. Its one permitted recovery call, when needed, is part
 of that pass and does not consume an additional turn. The shared `max_turns` limit prevents
@@ -62,13 +75,6 @@ type = "gate"
 prompt = ""
 ```
 
-An aspect entry may instead reference a TOML file:
-
-```toml
-[[pipelines.rigour.aspects]]
-file = "aspects/spec-align.toml"
-```
-
 The `run` command accepts a pipeline name, `--goal`, `--request`, and an optional
 `--prompts` directory. Its default prompt directory is `prompts`. `--file` selects the
 configuration file and defaults to `piper.toml`.
@@ -77,47 +83,70 @@ configuration file and defaults to `piper.toml`.
 
 Every Worker response is exactly one non-empty line. It has one uppercase verb and its
 arguments, separated by whitespace. One final newline is allowed; Markdown fences, JSON,
-leading or trailing whitespace, and additional lines are rejected. IDs and knowledge keys
-match `[A-Za-z0-9_-]+`. Text arguments are the non-empty remainder of the line.
+leading or trailing whitespace, and additional lines are rejected. IDs match
+`[A-Za-z0-9_-]+`. Text arguments are the non-empty remainder of the line.
 
 ```text
-NEXT
-ADD-KNOWLEDGE spec-align Preserve API compatibility
-UPDATE-KNOWLEDGE spec-align Preserve the stable API
+SET Preserve public API compatibility.
+CONTINUE
 JUMP review
-FORK alternative-1 Explore the implementation option
-MERGE alternative-1,alternative-2
-DONE Final result
+FORK alternative-1 Explore migration risk.
+STOP Missing security requirements.
+DONE Final readiness assessment.
 ```
 
 | Command | Arguments | Effect |
 | --- | --- | --- |
-| `NEXT` | none | Advances to the next Aspect without changing the Request. |
-| `ADD-KNOWLEDGE` | `<key> <value>` | Adds a previously absent key, then re-runs this Aspect. |
-| `UPDATE-KNOWLEDGE` | `<key> <value>` | Replaces an existing key, then re-runs this Aspect. |
-| `JUMP` | `<aspect-id>` | Transfers control to the named Aspect. |
-| `FORK` | `<fork-id> <prompt>` | Runs a child from the next Aspect with the same Request, goal, and Corpus, then re-runs this Aspect. |
-| `MERGE` | `<fork-id>[,<fork-id>...]` | Incorporates completed child Corpus entries, then advances. |
-| `DONE` | `<final-result>` | Returns a final Result immediately. |
+| `SET` | `<knowledge>` | Sets the current Worker's contribution in its current branch, then re-runs that Worker. It creates the contribution when absent and replaces it when present. |
+| `CONTINUE` | none | With no forks from the current Worker, advances to the next Aspect. With completed forks, automatically joins their Corpora, clears that Worker's fork history, then advances. |
+| `JUMP` | `<aspect-id>` | Transfers control to an `ASPECT` target. It is invalid while the current Worker has unjoined forks. |
+| `FORK` | `<fork-id> <directive>` | Runs an isolated child from the next Aspect with the same Request, Goal, and starting Corpus. The child completes before the parent Worker runs again. |
+| `STOP` | `<reason>` | Stops the entire run cleanly without a final Result. A child `STOP` stops its parent run as well. |
+| `DONE` | `<result>` | Returns a final Result immediately. It is invalid while the current Worker has unjoined forks. |
 
-The driver rejects an unknown verb, malformed arguments, duplicate IDs in one `MERGE`, a
-duplicate fork ID, a fork from the final Aspect, an unknown or incomplete merge target,
-`ADD-KNOWLEDGE` for an existing key, and `UPDATE-KNOWLEDGE` for a missing key.
+The driver rejects unknown verbs, malformed arguments, duplicate fork IDs from one Worker,
+a fork from the final Aspect, and `JUMP`, `STOP`, or `DONE` that would discard unjoined fork
+work. `SET` is the sole knowledge mutation command; `ADD-KNOWLEDGE`, `UPDATE-KNOWLEDGE`,
+`NEXT`, and explicit `MERGE` are not part of this protocol.
 
-## Corpus and forks
+## Corpus context
 
-The Corpus is a map of durable Knowledge injected into every later Worker prompt. Root
-pipeline keys are written as provided. A fork automatically writes each of its keys under
-`fork-id/key`, for example `alternative/tdd-red`. This prevents sibling and parent
-collisions while keeping provenance visible.
+The driver provides each Worker with compact directives:
 
-A fork begins with a copy of the parent Corpus and starts at the Aspect immediately after
-the `FORK` command. The fork prompt is injected into its Worker prompt. When a parent runs
-`MERGE`, the driver copies the fork's Corpus entries into the parent Corpus. Only an
-explicit merge makes a fork's discoveries available to later parent Aspects.
+```text
+KNOWLEDGE Preserve public API compatibility.
+ASPECT security-review
+ASPECT final-synthesis
+FORK alternative-1 Explore migration risk.
+```
 
-Forks execute synchronously and recursively. A fork can itself fork or merge, subject to
-the same shared turn limit.
+- `KNOWLEDGE` contains the current Corpus. Source metadata may be displayed for orientation,
+  but Workers do not address entries by key.
+- `ASPECT` lists the valid `JUMP` targets.
+- `FORK` lists completed forks launched by the current Worker, including the directive used
+  to create each fork. This history prevents the Worker from repeating equivalent branches.
+
+`FORK` history is scoped to the Worker that created those branches. A child has independent
+fork history if it creates further forks.
+
+## Fork lifecycle
+
+A fork is a branch, not a namespace the Worker must manage.
+
+1. A Worker emits `FORK alternative-1 Explore migration risk.`
+2. The driver runs that child synchronously from the next Aspect with a copy of the parent
+   Corpus. The child accumulates its own additional knowledge and completes by reaching the
+   end of its pipeline or emitting `DONE`.
+3. The driver retains the completed child Corpus and returns to the parent Worker. It adds a
+   `FORK alternative-1 …` history directive to the parent prompt, but does not yet expose
+   the child Corpus as parent knowledge.
+4. The parent may create more forks. It must eventually emit `CONTINUE`.
+5. `CONTINUE` automatically joins every completed child Corpus into the parent Corpus and
+   advances to the next Aspect.
+
+This makes `CONTINUE` the join barrier. Later Aspects never start before all child work is
+complete and joined. Selective or partial merges are deliberately deferred until there is a
+concrete need for them.
 
 ## Templates
 
@@ -126,7 +155,7 @@ the same shared turn limit.
 | `aspect-worker.md` | Worker request | `aspect_name`, `aspect_id`, `aspect_prompt`, `request`, `goal`, `fork_prompt`, `context` |
 | `aspect-recover.md` | One-shot formatter recovery | The rejected raw response is appended by the driver. |
 
-## Known limitations
+## Implementation note
 
-- The LLM invocation is split on whitespace, so command templates cannot safely express
-  shell-style quoting. The invocation must include `{{prompt}}`; `{{model}}` is optional.
+This is the accepted target protocol. The implementation and example pipelines must be
+migrated to it together; no compatibility aliases for removed verbs are required.

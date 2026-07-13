@@ -4,36 +4,44 @@
 - **Scope:** Designing safe, focused Aspect sequences for Piper pipelines.
 
 ## Philosophy
-Aspect-Oriented Prompting (AOP) decomposes a Request into isolated lenses. Workers preserve the Request and add durable findings to the Corpus, so later Aspects can reason from expanded context without re-discovering earlier work.
 
-## The Funnel Hierarchy
-Aspects must be ordered by the scope of their impact, moving from the most fundamental to the most superficial:
+Aspect-Oriented Prompting (AOP) decomposes a Request into isolated lenses. Workers preserve
+the Request and use `SET` to contribute durable knowledge to the Corpus. Later Aspects use
+that expanded Corpus, so each concern is considered once and its findings remain available.
 
-1. **Foundational Aspects**:
-   - **Focus**: Core correctness, logic, safety, and factual accuracy.
-   - **Goal**: "Is the content correct and safe?"
-   - **Example**: `security-audit`, `fact-check`, `logic-validation`.
+## Aspect ordering
 
-2. **Structural Aspects**:
-   - **Focus**: Organization, flow, architecture, and adherence to specifications (RFCs, ADRs).
-   - **Goal**: "Is the content structured correctly?"
-   - **Example**: `spec-alignment`, `modular-decomposition`, `flow-optimization`.
+Order Aspects so dependent analysis follows the knowledge it needs:
 
-3. **Superficial Aspects**:
-   - **Focus**: Voice, tone, brand alignment, typography, and polish.
-   - **Goal**: "Does the content sound and look right?"
-   - **Example**: `brand-voice`, `conciseness-filter`, `formatting-pass`.
+1. **Foundational Aspects** — correctness, logic, safety, and factual accuracy.
+2. **Structural Aspects** — architecture, specifications, organization, and flow.
+3. **Presentation Aspects** — voice, tone, brand alignment, typography, and polish.
+4. **Synthesis Aspects** — produce a `DONE` Result when the pipeline requires an answer
+   rather than only an expanded Corpus.
 
-## Design Principles
-- **Isolation**: Each Aspect should manage exactly one dimension of alignment. If an Aspect is trying to fix both "security" and "grammar," it should be split.
+## Design principles
+
 - **Request integrity**: Workers must never rewrite the Request.
-- **Additive Knowledge**: Use the `Corpus` to pass discoveries (for example, a Foundational Aspect identifying a specific bug) to later Aspects so they can build on it without re-discovering it.
-- **Explicit control flow**: Use `NEXT` for normal progression and `JUMP`, `FORK`, `MERGE`, and `DONE` only when needed. Each Worker invocation emits exactly one command. A final synthesis is an explicit Aspect, never an implicit driver step.
-- **Bounded execution**: Set `max_turns` high enough for intentional loops and forks, but low enough to stop a malformed or indecisive pipeline.
+- **One contribution per Aspect**: `SET` replaces the current Worker's own contribution;
+  use a concise, consolidated statement rather than arbitrary knowledge keys.
+- **Corpus first**: A later Aspect should consume earlier findings, not independently
+  rediscover them.
+- **Normal progression**: Use `CONTINUE` when an Aspect has completed its contribution.
+- **Explicit routing**: Use `JUMP` only for a meaningful revisit to an `ASPECT` target.
+- **Forks are barriers**: Use `FORK` only for independent exploration. A Worker sees its
+  own completed fork history and must `CONTINUE` to join all child Corpora before another
+  Aspect starts.
+- **Explicit termination**: Use `STOP <reason>` for a clean blocked or abandoned run and
+  `DONE <result>` for a completed final synthesis.
+- **Bounded execution**: Set `max_turns` high enough for intentional `SET` loops and forks,
+  but low enough to stop a malformed or indecisive run.
 
-## Design Workflow
-1. **Constraint Extraction**: Identify all "deal-breakers" and requirements.
-2. **Clustering**: Group constraints into Aspects based on the hierarchy (Foundational $\rightarrow$ Structural $\rightarrow$ Superficial).
-3. **Ordering**: Sequence Aspects so foundational knowledge is available before dependent analysis.
-4. **Control flow**: Add a `gate` for human judgment, a `jump` only for a meaningful revisit, and a `fork` only for independent work whose results will be explicitly merged.
-5. **Termination**: End the pipeline with `DONE <final-result>` once its goal is reached; do not rely on an implicit synthesis phase.
+## Design workflow
+
+1. **Request and goal**: State the immutable Request and desired Goal separately.
+2. **Constraint extraction**: Identify the durable facts and decisions later Aspects need.
+3. **Aspect design**: Give each Aspect one question or concern and order them by dependency.
+4. **Fork design**: Add a fork only for genuinely independent exploration. Give each branch
+   a distinct directive so the parent Worker can recognize it in fork history.
+5. **Termination**: Add a synthesis Aspect only when a final Result is needed; otherwise a
+   pipeline may end after its Corpus has been expanded.
