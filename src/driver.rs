@@ -1,10 +1,9 @@
 use crate::dsl::AspectAction;
 use crate::llm::LlmClient;
 use crate::models::AspectType;
-use crate::state::{CompletedFork, PipelineState, SessionContext};
+use crate::state::{PipelineState, SessionContext};
 use anyhow::{Context, Result};
 use dialoguer::Select;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -13,10 +12,16 @@ pub struct Driver<C: LlmClient> {
     prompt_dir: PathBuf,
 }
 
-struct RunOutcome {
-    results: Vec<String>,
-    corpus: HashMap<String, String>,
-    stopped: bool,
+#[derive(Debug)]
+pub enum DriveStatus {
+    WaitingAtGate,
+    Done(Vec<String>),
+    Stopped(String),
+}
+
+pub struct DriveOutcome {
+    pub state: PipelineState,
+    pub status: DriveStatus,
 }
 
 impl<C: LlmClient> Driver<C> {
@@ -31,7 +36,7 @@ impl<C: LlmClient> Driver<C> {
 
     fn format_aspect_context(state: &PipelineState) -> String {
         let context = std::iter::once(format!("CONTEXT {}", state.context_path()));
-        let mut knowledge: Vec<_> = state.corpus.iter().collect();
+        let mut knowledge: Vec<_> = state.frame().corpus.iter().collect();
         knowledge.sort_unstable_by_key(|(key, _)| *key);
         let knowledge = knowledge
             .into_iter()
@@ -41,10 +46,12 @@ impl<C: LlmClient> Driver<C> {
             .iter()
             .map(|aspect| format!("ASPECT {}", aspect.id));
         let fork_history = state
+            .frame()
             .completed_forks
             .iter()
             .map(|fork| format!("FORK {} {}", fork.id, fork.prompt));
         let mut fork_knowledge: Vec<_> = state
+            .frame()
             .completed_forks
             .iter()
             .flat_map(|fork| {
@@ -67,7 +74,7 @@ impl<C: LlmClient> Driver<C> {
             .join("\n")
     }
 
-    fn handle_gate(&self, state: &mut PipelineState) -> Result<bool> {
+    fn handle_gate(&self, state: &PipelineState) -> Result<bool> {
         println!("\n--- 🛑 STOP-GATE: {} ---", state.current_aspect().name);
         println!("\nREQUEST:\n\n{}\n", state.request);
         println!("--------------------------------------------------");
@@ -84,17 +91,49 @@ impl<C: LlmClient> Driver<C> {
         }
     }
 
-    pub fn run(&self, ctx: &mut SessionContext, state: PipelineState) -> Result<Vec<String>> {
-        let outcome = self.run_inner(ctx, state)?;
-        Ok(outcome.results)
+    pub fn run(&self, ctx: &mut SessionContext, mut state: PipelineState) -> Result<Vec<String>> {
+        loop {
+            let outcome = self.drive(ctx, state)?;
+            state = outcome.state;
+            match outcome.status {
+                DriveStatus::WaitingAtGate => {
+                    let gate_id = state.current_aspect().id.clone();
+                    if !self.handle_gate(&state)? {
+                        anyhow::bail!("Run aborted by user at gate {gate_id}");
+                    }
+                    state.frame_mut().current_index += 1;
+                }
+                DriveStatus::Done(results) => return Ok(results),
+                DriveStatus::Stopped(reason) => {
+                    println!("[Driver] LLM stopped the run: {reason}");
+                    return Ok(Vec::new());
+                }
+            }
+        }
     }
 
-    fn run_inner(&self, ctx: &mut SessionContext, mut state: PipelineState) -> Result<RunOutcome> {
+    pub fn drive(
+        &self,
+        ctx: &mut SessionContext,
+        mut state: PipelineState,
+    ) -> Result<DriveOutcome> {
         let mut all_results = Vec::new();
 
-        while state.current_index < state.aspects.len() {
+        loop {
+            if state.frame().current_index >= state.aspects.len() {
+                if state.is_root() {
+                    return Ok(DriveOutcome {
+                        state,
+                        status: DriveStatus::Done(all_results),
+                    });
+                }
+                Self::ensure_no_unjoined_forks(&state, "return")?;
+                state.return_current_fork()?;
+                continue;
+            }
             let aspect = state.current_aspect().clone();
             let fork_info = state
+                .frame()
                 .fork_id
                 .as_ref()
                 .map(|id| format!("[Fork: {}]", id))
@@ -109,10 +148,10 @@ impl<C: LlmClient> Driver<C> {
 
             match aspect.aspect_type {
                 AspectType::Gate => {
-                    if !self.handle_gate(&mut state)? {
-                        anyhow::bail!("Run aborted by user at gate {}", aspect.id);
-                    }
-                    state.current_index += 1;
+                    return Ok(DriveOutcome {
+                        state,
+                        status: DriveStatus::WaitingAtGate,
+                    });
                 }
                 AspectType::Worker => {
                     ctx.consume_turn(state.max_turns)?;
@@ -127,7 +166,7 @@ impl<C: LlmClient> Driver<C> {
                         .replace("{{request}}", &state.request)
                         .replace(
                             "{{fork_prompt}}",
-                            state.fork_prompt.as_deref().unwrap_or(""),
+                            state.frame().fork_prompt.as_deref().unwrap_or(""),
                         )
                         .replace("{{context}}", &context);
 
@@ -151,57 +190,18 @@ impl<C: LlmClient> Driver<C> {
                     match action {
                         AspectAction::Set(value) => {
                             let key = state.contribution_key();
-                            state.corpus.insert(key, value);
+                            state.frame_mut().corpus.insert(key, value);
                         }
                         AspectAction::Continue => {
-                            for fork in state.completed_forks.drain(..) {
-                                state.corpus.extend(fork.corpus);
+                            state.join_completed_forks();
+                            if state.is_root() {
+                                state.frame_mut().current_index += 1;
+                            } else {
+                                state.return_current_fork()?;
                             }
-                            if state.fork_id.is_some() {
-                                return Ok(RunOutcome {
-                                    results: all_results,
-                                    corpus: state.corpus,
-                                    stopped: false,
-                                });
-                            }
-                            state.current_index += 1;
                         }
                         AspectAction::Fork { id, prompt } => {
-                            if state.completed_forks.iter().any(|fork| fork.id == id) {
-                                anyhow::bail!("fork ID '{}' already exists", id);
-                            }
-                            let mut branch_path = state.branch_path.clone();
-                            branch_path.push(id.clone());
-                            let fork_state = PipelineState {
-                                fork_id: Some(id.clone()),
-                                fork_prompt: Some(prompt.clone()),
-                                branch_path,
-                                completed_forks: Vec::new(),
-                                request: state.request.clone(),
-                                current_index: state.current_index,
-                                aspects: state.aspects.clone(),
-                                corpus: state.corpus.clone(),
-                                max_turns: state.max_turns,
-                                max_recoveries: state.max_recoveries,
-                            };
-                            let fork_outcome = self.run_inner(ctx, fork_state)?;
-                            if fork_outcome.stopped {
-                                return Ok(RunOutcome {
-                                    results: all_results,
-                                    corpus: state.corpus,
-                                    stopped: true,
-                                });
-                            }
-                            let fork_corpus = fork_outcome
-                                .corpus
-                                .into_iter()
-                                .filter(|(key, value)| state.corpus.get(key) != Some(value))
-                                .collect();
-                            state.completed_forks.push(CompletedFork {
-                                id,
-                                prompt,
-                                corpus: fork_corpus,
-                            });
+                            state.push_fork(id, prompt)?;
                         }
                         AspectAction::Jump(id) => {
                             Self::ensure_no_unjoined_forks(&state, "JUMP")?;
@@ -209,39 +209,31 @@ impl<C: LlmClient> Driver<C> {
                         }
                         AspectAction::Stop(reason) => {
                             Self::ensure_no_unjoined_forks(&state, "STOP")?;
-                            println!("[Driver] LLM stopped the run: {reason}");
-                            return Ok(RunOutcome {
-                                results: all_results,
-                                corpus: state.corpus,
-                                stopped: true,
+                            return Ok(DriveOutcome {
+                                state,
+                                status: DriveStatus::Stopped(reason),
                             });
                         }
                         AspectAction::Done(result) => {
                             Self::ensure_no_unjoined_forks(&state, "DONE")?;
                             println!("[Driver] LLM signaled completion.");
-                            if state.fork_id.is_none() {
+                            if state.is_root() {
                                 all_results.push(result);
+                                return Ok(DriveOutcome {
+                                    state,
+                                    status: DriveStatus::Done(all_results),
+                                });
                             }
-                            return Ok(RunOutcome {
-                                results: all_results,
-                                corpus: state.corpus,
-                                stopped: false,
-                            });
+                            state.return_current_fork()?;
                         }
                     }
                 }
             }
         }
-
-        Ok(RunOutcome {
-            results: all_results,
-            corpus: state.corpus,
-            stopped: false,
-        })
     }
 
     fn ensure_no_unjoined_forks(state: &PipelineState, action: &str) -> Result<()> {
-        if !state.completed_forks.is_empty() {
+        if !state.frame().completed_forks.is_empty() {
             anyhow::bail!("{action} cannot discard unjoined fork work; use CONTINUE first");
         }
 
@@ -315,14 +307,9 @@ mod tests {
 
         let driver = Driver::new(client, temp_dir);
         let mut ctx = SessionContext::new();
-        let state = PipelineState {
-            fork_id: None,
-            fork_prompt: None,
-            branch_path: Vec::new(),
-            completed_forks: Vec::new(),
-            request: "Request".to_string(),
-            current_index: 0,
-            aspects: vec![
+        let state = PipelineState::new(
+            "Request".to_string(),
+            vec![
                 Aspect {
                     id: "a1".to_string(),
                     name: "Distill".to_string(),
@@ -338,14 +325,41 @@ mod tests {
                     model: None,
                 },
             ],
-            corpus: std::collections::HashMap::new(),
-            max_turns: std::num::NonZeroUsize::new(10).expect("turn limit is non-zero"),
-            max_recoveries: 3,
-        };
+            std::num::NonZeroUsize::new(10).expect("turn limit is non-zero"),
+            3,
+        );
 
         let results = driver.run(&mut ctx, state).unwrap();
 
         assert_eq!(results, vec!["Parent Final"]);
+    }
+
+    #[test]
+    fn test_drive_pauses_at_gate_without_reading_terminal_input() {
+        let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
+        let client = MockLlmClient {
+            responses: Mutex::new(Vec::new()),
+        };
+        let driver = Driver::new(client, temp_dir.path().to_path_buf());
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Approve the release".to_string(),
+            vec![Aspect {
+                id: "approval".to_string(),
+                name: "Release Approval".to_string(),
+                aspect_type: AspectType::Gate,
+                prompt: String::new(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(1).unwrap(),
+            0,
+        );
+
+        let outcome = driver.drive(&mut ctx, state).expect("drive should pause");
+
+        assert!(matches!(outcome.status, DriveStatus::WaitingAtGate));
+        assert_eq!(outcome.state.frame().current_index, 0);
+        assert_eq!(outcome.state.current_aspect().id, "approval");
     }
 
     #[test]
