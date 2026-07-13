@@ -4,18 +4,29 @@
 
 ## Resume state
 
-- Branch: `main`, ahead of `gh/main` by eight commits before this planning checkpoint.
-- Committed `37074a7 define join alias to simplify branch completion`.
-- Committed `65db0e4 exercise corpus flow through fork joins`.
-- Committed `e32a9da fold desired outcome into the request`.
-- Committed `c43846a explain Piper as a deterministic anti-harness`.
-- Committed `ae663fd track engine hardening work across sessions`.
-- Committed `6a62b26 bound formatter recovery across the whole run`.
-- Committed `347ec01 keep fork work inside its launching aspect`.
-- Committed `6478447 checkpoint same-aspect fork completion`.
-- Planned persistent `start`/`continue`, attended terminal gates, and the local web UI in
-  `docs/scratch/2026-07-13-resumable-interactive-web-ui-plan.md`; implementation starts in
-  the next session after the proposed command and storage contract is accepted.
+- Branch: `main`, ahead of `gh/main` by 15 commits at this checkpoint; working tree clean
+  before this breadcrumb update.
+- Accepted the durable run contract in `docs/spec/run-lifecycle.md`: XDG project state,
+  stable pipeline IDs, ULID run IDs with human-friendly prefixes, per-pipeline active
+  pointers, and interactive selection for ambiguous `continue`/`abort` commands.
+- Landed the first execution groundwork in `2b3ccc6` through `2337b58`: accepted spec,
+  pipeline identity, XDG project metadata, restartable in-memory frames, and an initial
+  model-call checkpoint experiment.
+- Completed a two-phase ACE audit and committed its fixes as
+  `9da7c99 keep durable execution state coherent`. The audit made `PipelineState` the sole
+  budget owner, replaced invalid frame option pairs with `FrameScope`, validates frame
+  invariants before driving, anchors environment files beside the selected shared config,
+  hardens private XDG metadata creation, and removes the premature checkpoint/serde seam
+  until a real durable run aggregate owns it.
+- Required verification passed after the audit: `cargo fmt --check`, clippy over all
+  targets/features with warnings denied, 46 unit tests, 7 CLI tests, and `git diff --check`.
+- A complete checkout scan found no tracked, ignored, cached, or hidden Python artifacts.
+  Git history only records the already-deleted legacy Python tree in `67cd25f` and
+  `0fe8100`; do not rewrite history unless explicitly requested.
+- The XDG `project.json` namespace remains intentionally because it is accepted behavior
+  and provides a concrete canonical-project identity/collision check. Durable run
+  snapshots, active pointers, lifecycle commands, and terminal selection are not yet
+  implemented.
 - Gemma/OpenCode token spend during this session: 0. All pipeline tests used local,
   deterministic Workers.
 
@@ -52,14 +63,17 @@
 5. Review and execute the phased plan in
    `docs/scratch/2026-07-13-resumable-interactive-web-ui-plan.md`: persistent
    `start`/`continue`, attended TUI gates, then Ticket-Hamster-style `piper ui`.
+6. Resolve the existing child-`DONE` contradiction before persistence: the driver currently
+   returns a child Corpus to its parent, while the accepted engine specification says
+   `DONE` terminates the entire run. Add an exact fixture and make code and spec agree.
 
 ## Verification state
 
-After the recovery-budget implementation, these passed:
+After the 2026-07-13 ACE audit, these passed:
 
 - `cargo fmt --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test` (27 unit tests and 6 CLI tests)
-- ShellCheck over the embedded deterministic Bash Worker in `tests/cli.rs`
+- `cargo test` (46 unit tests and 7 CLI tests)
+- `git diff --check`
 
 Rerun all checks before each code commit.
