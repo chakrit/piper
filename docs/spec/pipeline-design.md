@@ -40,15 +40,25 @@ Order Aspects so dependent analysis follows the knowledge it needs:
   but low enough to stop a malformed or indecisive run.
 - **Bounded recovery**: Keep `max_recoveries` much lower than `max_turns`. Recovery repairs
   occasional formatting mistakes; it must not become the normal execution path.
+- **Stable identity**: Give `[pipeline].id` a concise, durable name. It selects the
+  pipeline's active run, so do not derive it from mutable file contents or casually rename
+  it.
+- **Resumable gates**: A gate is a durable pause, not an in-engine prompt. Place it only
+  after all context needed for a later operator decision has been checkpointed. Each
+  approval advances exactly one waiting gate.
 
 ## Design workflow
 
 1. **Request**: State the desired outcome and immutable input together as one Request.
-2. **Constraint extraction**: Identify the durable facts and decisions later Aspects need.
-3. **Aspect design**: Give each Aspect one question or concern and order them by dependency.
-4. **Fork design**: Add a fork only for genuinely independent exploration. Give each branch
+2. **Identity**: Choose a required `[pipeline].id` that remains meaningful across edits to
+   the pipeline file.
+3. **Constraint extraction**: Identify the durable facts and decisions later Aspects need.
+4. **Aspect design**: Give each Aspect one question or concern and order them by dependency.
+5. **Fork design**: Add a fork only for genuinely independent exploration. Give each branch
    a distinct directive that narrows the current Aspect. Have the child return with
    `CONTINUE` or its semantic alias `JOIN`, then let the parent consolidate pending results
    in the same Aspect before advancing.
-5. **Termination**: Add a synthesis Aspect only when a final Result is needed; otherwise a
+6. **Gate design**: Place gates after the durable analysis a reviewer needs. Expect a
+   separate `continue` invocation for each gate in unattended execution.
+7. **Termination**: Add a synthesis Aspect only when a final Result is needed; otherwise a
    pipeline may end after its Corpus has been expanded.

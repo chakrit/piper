@@ -30,13 +30,16 @@ that set it. Workers never supply arbitrary knowledge keys.
 ## State and execution
 
 `PipelineState` contains the Request, ordered Aspects, current position, Corpus,
-current branch scope, optional fork directive, a non-zero turn limit, and a recovery limit.
-A `SessionContext` is shared by the root pipeline and every fork and tracks total Worker
-calls and recovery calls.
+serializable execution-frame stack, a non-zero turn limit, and a recovery limit. The root
+and every fork share total Worker-call and recovery-call counts. The frame stack captures
+branch scope, pending children, and return positions so execution can be checkpointed and
+resumed without relying on the process call stack.
 
 For a `worker`, the driver loads `aspect-worker.md`, substitutes the template variables,
-calls the configured LLM, parses one command, and applies it. A `gate` pauses for a human
-to continue or abort; it cannot alter the Request.
+calls the configured LLM, parses one command, and applies it. A `gate` returns a typed
+pause to its caller; it cannot alter the Request. The engine is headless and never prompts
+for approval. Persistent checkpoint and gate behavior are defined in
+[`run-lifecycle.md`](run-lifecycle.md).
 
 Every Worker pass consumes one turn. A formatter-recovery call, when needed, is part of
 that pass and does not consume an additional turn, but it consumes the separate shared
@@ -54,10 +57,11 @@ invalid fails the run. Reaching the recovery limit fails before another recovery
 Shared configuration and pipelines live in separate TOML files. `piper.toml` contains
 runtime configuration such as `[llm]`. A pipeline file contains one `[pipeline]` table.
 Piper loads both files, merges the pipeline into the loaded configuration, and processes
-the resulting effective configuration. `max_turns` is optional, defaults to `100`, and
-must be at least one. `max_recoveries` is optional, defaults to `3`, and may be `0` to
-disable recovery. Both budgets are shared by root and fork execution. Aspects default to
-`worker`; set `type = "gate"` only for gate Aspects.
+the resulting effective configuration. `id` is required and uses `[A-Za-z0-9_-]+`; it is
+the stable, human-readable identity used to select durable runs. `max_turns` is optional,
+defaults to `100`, and must be at least one. `max_recoveries` is optional, defaults to `3`,
+and may be `0` to disable recovery. Both budgets are shared by root and fork execution.
+Aspects default to `worker`; set `type = "gate"` only for gate Aspects.
 
 ```toml
 [llm]
@@ -66,6 +70,7 @@ system_prompt = "You are a precise AOP worker."
 default_model = "cerebras/gemma-4-31b"
 
 [pipeline]
+id = "security-review"
 max_turns = 50
 max_recoveries = 3
 
