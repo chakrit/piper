@@ -141,6 +141,13 @@ impl<C: LlmClient> Driver<C> {
                             for fork in state.completed_forks.drain(..) {
                                 state.corpus.extend(fork.corpus);
                             }
+                            if state.fork_id.is_some() {
+                                return Ok(RunOutcome {
+                                    results: all_results,
+                                    corpus: state.corpus,
+                                    stopped: false,
+                                });
+                            }
                             state.current_index += 1;
                         }
                         AspectAction::Fork { id, prompt } => {
@@ -325,6 +332,65 @@ mod tests {
         let results = driver.run(&mut ctx, state).unwrap();
 
         assert_eq!(results, vec!["Parent Final"]);
+    }
+
+    #[test]
+    fn test_continue_returns_child_corpus_to_parent() {
+        let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
+        std::fs::write(
+            temp_dir.path().join("aspect-worker.md"),
+            "Aspect: {{aspect_id}}\nFork: {{fork_prompt}}\nContext:\n{{context}}",
+        )
+        .expect("worker template should be written");
+
+        let client = RecordingMockLlmClient {
+            responses: Mutex::new(vec![
+                "FORK hero Create a fantasy hero".to_string(),
+                "SET CHARACTER Lyra".to_string(),
+                "CONTINUE".to_string(),
+                "CONTINUE".to_string(),
+                "DONE Lyra crossed the moonlit bridge.".to_string(),
+            ]),
+            prompts: Mutex::new(Vec::new()),
+        };
+        let driver = Driver::new(client, temp_dir.path().to_path_buf());
+        let mut ctx = SessionContext::new();
+        let state = PipelineState::new(
+            "Write a short story".to_string(),
+            "Use every generated character".to_string(),
+            vec![
+                Aspect {
+                    id: "branch".to_string(),
+                    name: "Branch".to_string(),
+                    aspect_type: AspectType::Worker,
+                    prompt: "Create branches".to_string(),
+                    model: None,
+                },
+                Aspect {
+                    id: "compose".to_string(),
+                    name: "Compose".to_string(),
+                    aspect_type: AspectType::Worker,
+                    prompt: "Create a character in a fork; otherwise compose".to_string(),
+                    model: None,
+                },
+            ],
+            std::num::NonZeroUsize::new(5).expect("turn limit is non-zero"),
+        );
+
+        let results = driver.run(&mut ctx, state).expect("run should succeed");
+        assert_eq!(results, vec!["Lyra crossed the moonlit bridge."]);
+
+        let prompts = driver
+            .client
+            .prompts
+            .lock()
+            .expect("prompts lock should not be poisoned");
+        assert!(prompts[1].contains("Aspect: compose\nFork: Create a fantasy hero"));
+        assert!(prompts[2].contains("KNOWLEDGE CHARACTER Lyra"));
+        assert!(prompts[3].contains("Aspect: branch\nFork: \n"));
+        assert!(!prompts[3].contains("KNOWLEDGE CHARACTER Lyra"));
+        assert!(prompts[4].contains("Aspect: compose\nFork: \n"));
+        assert!(prompts[4].contains("KNOWLEDGE CHARACTER Lyra"));
     }
 
     #[test]

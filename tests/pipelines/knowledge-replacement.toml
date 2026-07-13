@@ -1,0 +1,12 @@
+[pipeline]
+max_turns = 5
+
+[[pipeline.aspects]]
+id = "replace"
+name = "Replace Knowledge"
+prompt = "Refine one numeric value, replacing your earlier contribution."
+
+[[pipeline.aspects]]
+id = "verify"
+name = "Verify Replacement"
+prompt = "Return the final numeric value supplied through the Corpus."

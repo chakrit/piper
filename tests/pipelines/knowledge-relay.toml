@@ -1,0 +1,12 @@
+[pipeline]
+max_turns = 4
+
+[[pipeline.aspects]]
+id = "seed"
+name = "Seed Knowledge"
+prompt = "Derive one opaque token and contribute it without changing the Request."
+
+[[pipeline.aspects]]
+id = "relay"
+name = "Relay Knowledge"
+prompt = "Return the opaque token supplied through the Corpus."

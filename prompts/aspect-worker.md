@@ -34,6 +34,7 @@ second line. A final newline is allowed.
 ```text
 SET durable constraint
 CONTINUE
+JOIN
 JUMP aspect-id
 FORK fork-id branch directive
 STOP blocked reason
@@ -41,7 +42,7 @@ DONE final result
 ```
 
 - `SET` records or replaces this Worker's one durable contribution, then re-runs this Aspect.
-- `CONTINUE` advances to the next Aspect. If completed forks are listed, it first joins all of their Corpora and clears this Worker's fork history.
+- `CONTINUE` and `JOIN` are aliases. Both first join any completed child Corpora. In the root run, both advance to the next Aspect. In a fork, both return the branch Corpus to its parent.
 - `JUMP` transfers control only to an ID listed by an `ASPECT` directive.
 - `FORK` starts a child at the next Aspect with the same Request, Goal, and Corpus, then re-runs this Aspect after the child completes.
 - `STOP` cleanly stops the entire run without a final Result.

@@ -24,7 +24,7 @@ impl AspectAction {
 
         match verb {
             "SET" => Self::require_text(arguments).map(Self::Set),
-            "CONTINUE" => Self::require_no_arguments(arguments).map(|()| Self::Continue),
+            "CONTINUE" | "JOIN" => Self::require_no_arguments(arguments).map(|()| Self::Continue),
             "FORK" => Self::parse_fork(arguments),
             "JUMP" => Self::parse_identifier(arguments, "aspect ID").map(Self::Jump),
             "STOP" => Self::require_text(arguments).map(Self::Stop),
@@ -90,6 +90,7 @@ mod tests {
                 AspectAction::Set("Preserve compatibility".to_string()),
             ),
             ("CONTINUE", AspectAction::Continue),
+            ("JOIN", AspectAction::Continue),
             (
                 "FORK alternative-1 Explore the implementation option",
                 AspectAction::Fork {
@@ -125,6 +126,14 @@ mod tests {
     fn parses_continue_without_arguments() {
         assert!(AspectAction::parse("CONTINUE").is_ok());
         assert!(AspectAction::parse("CONTINUE another aspect").is_err());
+    }
+
+    #[test]
+    fn parses_join_as_continue() {
+        let parsed = AspectAction::parse("JOIN").expect("JOIN should parse");
+
+        assert_eq!(parsed, AspectAction::Continue);
+        assert!(AspectAction::parse("JOIN child").is_err());
     }
 
     #[test]
