@@ -1,4 +1,5 @@
 [pipeline]
+id = "stress"
 
 [[pipeline.aspects]]
 id = "start"

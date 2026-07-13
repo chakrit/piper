@@ -1,4 +1,5 @@
 [pipeline]
+id = "knowledge-relay"
 max_turns = 4
 
 [[pipeline.aspects]]

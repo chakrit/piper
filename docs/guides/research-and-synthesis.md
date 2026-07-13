@@ -43,6 +43,7 @@ Save this as `pipelines/launch-research.toml` (or any path outside `piper.toml`)
 
 ```toml
 [pipeline]
+id = "research-synthesis"
 max_turns = 14
 max_recoveries = 2
 

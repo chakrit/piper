@@ -1,4 +1,5 @@
 [pipeline]
+id = "recovery-budget"
 max_turns = 3
 max_recoveries = 1
 

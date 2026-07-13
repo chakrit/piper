@@ -1,5 +1,6 @@
 # Minimal end-to-end configuration for validating Piper against a real Worker Lens.
 [pipeline]
+id = "smoke"
 max_turns = 1
 
 [[pipeline.aspects]]

@@ -1,4 +1,5 @@
 [pipeline]
+id = "parallel-arithmetic"
 max_turns = 12
 
 [[pipeline.aspects]]

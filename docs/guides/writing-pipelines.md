@@ -23,6 +23,7 @@ Put the ordered work in a separate pipeline file:
 
 ```toml
 [pipeline]
+id = "writing-example"
 max_turns = 8
 max_recoveries = 2
 

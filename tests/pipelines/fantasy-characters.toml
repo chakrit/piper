@@ -1,4 +1,5 @@
 [pipeline]
+id = "fantasy-characters"
 max_turns = 12
 
 [[pipeline.aspects]]

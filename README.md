@@ -101,6 +101,7 @@ A pipeline is an ordered list of inline or file-backed Aspects:
 
 ```toml
 [pipeline]
+id = "engineering-review"
 max_turns = 30
 max_recoveries = 3
 

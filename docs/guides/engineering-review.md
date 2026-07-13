@@ -30,6 +30,7 @@ Save the following as `engineering-review.toml`:
 
 ```toml
 [pipeline]
+id = "engineering-review"
 max_turns = 24
 max_recoveries = 3
 

@@ -1,4 +1,5 @@
 [pipeline]
+id = "knowledge-replacement"
 max_turns = 5
 
 [[pipeline.aspects]]

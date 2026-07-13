@@ -40,6 +40,7 @@ pub const DEFAULT_MAX_RECOVERIES: usize = 3;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Pipeline {
+    pub id: String,
     pub max_turns: usize,
     pub max_recoveries: usize,
     pub aspects: Vec<AspectStep>,
@@ -54,6 +55,7 @@ struct PipelineFile {
 impl Default for Pipeline {
     fn default() -> Self {
         Self {
+            id: String::new(),
             max_turns: DEFAULT_MAX_TURNS,
             max_recoveries: DEFAULT_MAX_RECOVERIES,
             aspects: Vec::new(),
@@ -132,6 +134,7 @@ impl Config {
         ctx: &crate::actions::AppContext,
         pipeline: &Pipeline,
     ) -> Result<ResolvedPipeline> {
+        crate::identifier::validate(&pipeline.id, "pipeline.id")?;
         let max_turns = NonZeroUsize::new(pipeline.max_turns)
             .context("Pipeline must set max_turns to at least 1")?;
 
@@ -233,6 +236,7 @@ mod tests {
         pipelines.insert(
             "test".to_string(),
             Pipeline {
+                id: "test".to_string(),
                 aspects: vec![AspectStep::Inline(Aspect {
                     id: "1".to_string(),
                     name: "N1".to_string(),
@@ -274,6 +278,7 @@ mod tests {
         pipelines.insert(
             "test".to_string(),
             Pipeline {
+                id: "test".to_string(),
                 aspects: vec![AspectStep::Reference { file: aspect_path }],
                 ..Default::default()
             },
@@ -298,6 +303,7 @@ mod tests {
         pipelines.insert(
             "test".to_string(),
             Pipeline {
+                id: "test".to_string(),
                 aspects: vec![AspectStep::Inline(Aspect {
                     id: "1".to_string(),
                     name: "N1".to_string(),
@@ -341,6 +347,7 @@ mod tests {
         pipelines.insert(
             "test".to_string(),
             Pipeline {
+                id: "zero-turns".to_string(),
                 max_turns: 0,
                 max_recoveries: DEFAULT_MAX_RECOVERIES,
                 aspects: Vec::new(),
@@ -363,6 +370,7 @@ mod tests {
         let pipeline = Config::parse_pipeline(
             r#"
                 [pipeline]
+                id = "parse-file"
                 max_turns = 4
 
                 [[pipeline.aspects]]
@@ -383,12 +391,55 @@ mod tests {
         let pipeline = Config::parse_pipeline(
             r#"
                 [pipeline]
+                id = "no-recovery"
                 max_recoveries = 0
             "#,
         )
         .expect("zero recovery budget should parse");
 
         assert_eq!(pipeline.max_recoveries, 0);
+    }
+
+    #[test]
+    fn test_parse_pipeline_preserves_stable_id() {
+        let pipeline = Config::parse_pipeline(
+            r#"
+                [pipeline]
+                id = "release-review"
+            "#,
+        )
+        .expect("pipeline should parse");
+
+        assert_eq!(pipeline.id, "release-review");
+    }
+
+    #[test]
+    fn test_resolve_pipeline_rejects_missing_id() {
+        let pipeline = Pipeline::default();
+        let config = Config::default();
+        let ctx = crate::actions::AppContext;
+
+        let Err(error) = config.resolve_pipeline(&ctx, &pipeline) else {
+            panic!("missing pipeline ID should fail")
+        };
+
+        assert!(error.to_string().contains("pipeline.id"));
+    }
+
+    #[test]
+    fn test_resolve_pipeline_rejects_malformed_id() {
+        let pipeline = Pipeline {
+            id: "release review".to_string(),
+            ..Default::default()
+        };
+        let config = Config::default();
+        let ctx = crate::actions::AppContext;
+
+        let Err(error) = config.resolve_pipeline(&ctx, &pipeline) else {
+            panic!("malformed pipeline ID should fail")
+        };
+
+        assert!(error.to_string().contains("pipeline.id"));
     }
 
     #[test]

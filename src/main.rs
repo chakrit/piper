@@ -8,6 +8,7 @@ mod actions;
 mod config;
 mod driver;
 mod dsl;
+mod identifier;
 mod llm;
 mod models;
 mod state;

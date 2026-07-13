@@ -1,4 +1,5 @@
 [pipeline]
+id = "black-box"
 max_turns = 8
 
 [[pipeline.aspects]]

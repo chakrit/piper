@@ -1,6 +1,7 @@
 # Piper's self-evolving development pipeline. Run with:
 # cargo run -- run pipeline.toml ...
 [pipeline]
+id = "piper-development"
 # Shared by the root pipeline and every work-stream fork.
 max_turns = 48
 # Formatting recovery is exceptional and shares one smaller run-wide budget.

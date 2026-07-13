@@ -50,13 +50,7 @@ impl AspectAction {
     }
 
     fn parse_identifier(value: &str, name: &str) -> anyhow::Result<String> {
-        let valid = !value.is_empty()
-            && value.chars().all(|character| {
-                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
-            });
-        if !valid {
-            anyhow::bail!("{name} must use only ASCII letters, digits, hyphens, or underscores")
-        }
+        crate::identifier::validate(value, name)?;
 
         Ok(value.to_string())
     }
