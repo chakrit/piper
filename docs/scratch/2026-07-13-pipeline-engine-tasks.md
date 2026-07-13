@@ -4,7 +4,7 @@
 
 ## Resume state
 
-- Branch: `main`, ahead of `gh/main` by seven commits before this checkpoint.
+- Branch: `main`, ahead of `gh/main` by eight commits before this planning checkpoint.
 - Committed `37074a7 define join alias to simplify branch completion`.
 - Committed `65db0e4 exercise corpus flow through fork joins`.
 - Committed `e32a9da fold desired outcome into the request`.
@@ -12,6 +12,10 @@
 - Committed `ae663fd track engine hardening work across sessions`.
 - Committed `6a62b26 bound formatter recovery across the whole run`.
 - Committed `347ec01 keep fork work inside its launching aspect`.
+- Committed `6478447 checkpoint same-aspect fork completion`.
+- Planned persistent `start`/`continue`, attended terminal gates, and the local web UI in
+  `docs/scratch/2026-07-13-resumable-interactive-web-ui-plan.md`; implementation starts in
+  the next session after the proposed command and storage contract is accepted.
 - Gemma/OpenCode token spend during this session: 0. All pipeline tests used local,
   deterministic Workers.
 
@@ -45,6 +49,9 @@
 4. Expand recovery acceptance coverage beyond the committed shared-budget test: successful
    one-shot recovery through the CLI, preserved Corpus during recovery, malformed recovery
    failure, and recovery inside a fork.
+5. Review and execute the phased plan in
+   `docs/scratch/2026-07-13-resumable-interactive-web-ui-plan.md`: persistent
+   `start`/`continue`, attended TUI gates, then Ticket-Hamster-style `piper ui`.
 
 ## Verification state
 
