@@ -1,21 +1,54 @@
-# Piper: Aspect-Oriented Prompting (AOP) Engine
+# Piper
 
-Piper is a context engineering engine that implements Aspect-Oriented Prompting.
-It decomposes complex alignment constraints into modular "Aspects," processing them
-sequentially via a state-machine driver to eliminate instruction drift.
+Piper is a standalone Rust CLI for context-engineering pipelines. It applies ordered
+Aspect Workers to an immutable Request and Goal, accumulates Knowledge in a shared Corpus,
+and supports routing, isolated forks, merges, human gates, bounded execution, and explicit
+completion.
 
-## Architecture
-- `pipelines/`: Pipeline definitions (Aspect sequences).
-- `prompts/`: Aspect lens templates.
-- `src/main.rs`: The Rust state-machine driver.
+## Repository shape
 
-## Core Tooling
-- **Driver**: `cargo run` (or the compiled `piper` binary)
-- **Build/Run**: Rust (Cargo)
+- `src/main.rs`: CLI parsing and `init` / `run` dispatch.
+- `src/driver.rs`: pipeline state machine, prompt execution, recovery, gates, and forks.
+- `src/dsl.rs`: parser for the single-line Worker action protocol.
+- `src/state.rs`: pipeline state, fork Corpora, and the shared turn budget.
+- `src/config.rs`: TOML configuration and inline/file-backed Aspect resolution.
+- `src/llm.rs`: external LLM command invocation.
+- `src/actions/`: filesystem reads and mutations.
+- `prompts/`: runtime Worker templates.
+- `pipelines/`: checked-in pipeline configurations.
+
+## Verification
+
+Run before completing code changes:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+```
+
+The crate uses `#![deny(warnings)]`. Tests are colocated with the Rust modules they cover.
+
+## Conventions
+
+- Keep the Request immutable; Workers add or update Knowledge in the Corpus.
+- Worker output is exactly one DSL command on one non-empty line.
+- The root run and all forks share one global turn budget.
+- Keep filesystem access behind actions in `src/actions/`.
+- Use short, imperative commit subjects, consistent with recent history.
+
+## ACE skills
+
+- `general-coding`: project-wide planning, testing, editing, review, and commit rules.
+- `rust-coding`: Rust and Cargo conventions.
+- `ace`: recurring per-task workflow.
+- `ace-save`: durable session handoff.
+- `ace-docs`: durable documentation routing and scaffolding.
+- `ace-audit`: focused audits of implementation and specification changes.
 
 ## Durable artifacts
 
-`docs/` — file by the routing gate in `docs/README.md`: a ruling → `decisions/`;
-third-party lookup → `vendor/`; a how-to → `guides/`; our own design/surface →
-`spec/`; unsettled exploration → `scratch/` (last resort, opened with a
-"not spec/decision because ___" line). Nothing defaults to `scratch/`.
+Use [`docs/README.md`](docs/README.md) as the routing gate. Project behavior and exact
+surfaces belong in `docs/spec/`; decisions in `docs/decisions/`; operating guides in
+`docs/guides/`; third-party references in `docs/vendor/`; and genuinely unsettled work in
+`docs/scratch/`.

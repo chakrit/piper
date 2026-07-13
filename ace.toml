@@ -1,8 +1,10 @@
 school = "prod9/school"
+backend = "codex"
 skills = [
     "general-coding",
+    "rust-coding",
     "ace",
     "ace-save",
-    "visualise",
     "ace-docs",
+    "ace-audit",
 ]
