@@ -53,16 +53,16 @@ fn cli_runs_pipeline_incrementally() {
     let output = Command::new(env!("CARGO_BIN_EXE_piper"))
         .args([
             "--file",
-            "tests/pipelines/black-box.toml",
+            "piper.toml",
             "run",
-            "black-box",
+            "tests/pipelines/black-box.toml",
             "--goal",
             "Exercise the CLI",
             "--request",
             "Run the black-box pipeline",
         ])
         .env(
-            "PIPER_TEST_LLM_INVOCATION",
+            "PIPER_LLM_INVOCATION",
             format!("{} {{{{prompt}}}}", llm.display()),
         )
         .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")

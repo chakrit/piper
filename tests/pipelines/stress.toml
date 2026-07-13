@@ -1,19 +1,16 @@
-[llm]
-invocation = "${PIPER_LLM_INVOCATION}"
-system_prompt = "You are a precise AOP worker."
-default_model = "${PIPER_DEFAULT_MODEL}"
+[pipeline]
 
-[[pipelines.stress.aspects]]
+[[pipeline.aspects]]
 id = "start"
 name = "Start Aspect"
 prompt = "Return exactly this one line: JUMP end"
 
-[[pipelines.stress.aspects]]
+[[pipeline.aspects]]
 id = "middle"
 name = "Middle Aspect"
 prompt = "You should not be seen."
 
-[[pipelines.stress.aspects]]
+[[pipeline.aspects]]
 id = "end"
 name = "End Aspect"
 prompt = "Return exactly this one line: DONE Jumped"

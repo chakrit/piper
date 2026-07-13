@@ -49,8 +49,12 @@ call using `aspect-recover.md`. A recovery response that is still invalid fails 
 
 ## Pipeline configuration
 
-Pipelines live in TOML. `max_turns` is optional and defaults to `100`; it must be at least
-one. Aspects default to `worker`; set `type = "gate"` only for gate Aspects.
+Shared configuration and pipelines live in separate TOML files. `piper.toml` contains
+runtime configuration such as `[llm]`. A pipeline file contains one `[pipeline]` table.
+Piper loads both files, merges the pipeline into the loaded configuration, and processes
+the resulting effective configuration. `max_turns` is optional and defaults to `100`; it
+must be at least one. Aspects default to `worker`; set `type = "gate"` only for gate
+Aspects.
 
 ```toml
 [llm]
@@ -58,25 +62,29 @@ invocation = "opencode run -m {{model}} {{prompt}}"
 system_prompt = "You are a precise AOP worker."
 default_model = "cerebras/gemma-4-31b"
 
-[pipelines.rigour]
+[pipeline]
 max_turns = 50
 
-[[pipelines.rigour.aspects]]
+[[pipeline.aspects]]
 id = "spec-align"
 name = "Spec Alignment"
 prompt = "Record requirements that must be met."
 model = "optional-model-override"
 
-[[pipelines.rigour.aspects]]
+[[pipeline.aspects]]
 id = "review"
 name = "Human Review"
 type = "gate"
 prompt = ""
 ```
 
-The `run` command accepts a pipeline name, `--goal`, `--request`, and an optional
+The `run` command accepts a pipeline TOML path, `--goal`, `--request`, and an optional
 `--prompts` directory. Its default prompt directory is `prompts`. `--file` selects the
-configuration file and defaults to `piper.toml`.
+shared configuration file and defaults to `piper.toml`. For example:
+
+```text
+piper --file piper.toml run pipeline.toml --goal "..." --request "..."
+```
 
 ## Worker DSL
 

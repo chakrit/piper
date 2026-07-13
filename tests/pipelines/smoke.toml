@@ -1,13 +1,8 @@
 # Minimal end-to-end configuration for validating Piper against a real Worker Lens.
-[llm]
-invocation = "${PIPER_LLM_INVOCATION}"
-system_prompt = "You are a precise Piper Worker Lens. Follow the supplied action protocol exactly."
-default_model = "${PIPER_DEFAULT_MODEL}"
-
-[pipelines.smoke]
+[pipeline]
 max_turns = 1
 
-[[pipelines.smoke.aspects]]
+[[pipeline.aspects]]
 id = "smoke"
 name = "Smoke Test"
 prompt = "Return exactly this one line: DONE Piper smoke test passed."

@@ -32,8 +32,8 @@ enum Commands {
     Init,
     /// Run a pipeline
     Run {
-        /// Name of the pipeline to run (from config file)
-        pipeline_name: String,
+        /// TOML file containing the pipeline to run
+        pipeline_file: PathBuf,
 
         /// The original goal/objective
         #[arg(short, long)]
@@ -58,22 +58,6 @@ fn main() -> Result<()> {
             let mut config = config::Config::default();
             config.llm.invocation = "gpt-4o {{prompt}}".to_string();
 
-            let mut pipelines = std::collections::HashMap::new();
-            pipelines.insert(
-                "default".to_string(),
-                config::Pipeline {
-                    aspects: vec![config::AspectStep::Inline(crate::models::Aspect {
-                        id: "worker-1".to_string(),
-                        name: "Initial Worker".to_string(),
-                        aspect_type: crate::models::AspectType::Worker,
-                        prompt: "A basic worker to get started".to_string(),
-                        model: None,
-                    })],
-                    ..Default::default()
-                },
-            );
-            config.pipelines = pipelines;
-
             let toml_string = toml::to_string_pretty(&config)?;
             let action = WriteConfig {
                 path: cli.config_file.clone(),
@@ -83,13 +67,14 @@ fn main() -> Result<()> {
             println!("Created {:?} with default settings.", cli.config_file);
         }
         Commands::Run {
-            pipeline_name,
+            pipeline_file,
             goal,
             request,
             prompts,
         } => {
             let config = config::Config::load(&ctx, cli.config_file)?;
-            let pipeline = config.resolve_pipeline(&ctx, &pipeline_name)?;
+            let pipeline = config.load_pipeline(&ctx, pipeline_file)?;
+            let pipeline = config.resolve_pipeline(&ctx, &pipeline)?;
 
             let state = PipelineState::new(request, goal, pipeline.aspects, pipeline.max_turns);
             let mut ctx = state::SessionContext::new();

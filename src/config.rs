@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 #[serde(default)]
 pub struct Config {
     pub llm: LlmConfig,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub pipelines: HashMap<String, Pipeline>,
 }
 
@@ -42,6 +43,12 @@ pub struct Pipeline {
     pub aspects: Vec<AspectStep>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct PipelineFile {
+    pipeline: Option<Pipeline>,
+}
+
 impl Default for Pipeline {
     fn default() -> Self {
         Self {
@@ -72,13 +79,38 @@ impl Config {
         let mut env = Self::load_env_file(Path::new(".env"))?;
         env.extend(Self::load_env_file(Path::new(".env.local"))?);
         let content = interpolate_env(&content, |name| {
-            env.get(name).cloned().or_else(|| env::var(name).ok())
+            env::var(name).ok().or_else(|| env.get(name).cloned())
         })?;
         Self::parse(&content)
     }
 
     fn parse(content: &str) -> Result<Self> {
         toml::from_str(content).context("Failed to parse TOML config")
+    }
+
+    fn parse_pipeline(content: &str) -> Result<Pipeline> {
+        let pipeline_file: PipelineFile =
+            toml::from_str(content).context("Failed to parse TOML pipeline")?;
+        pipeline_file
+            .pipeline
+            .context("Pipeline file must contain a [pipeline] table")
+    }
+
+    pub fn load_pipeline(
+        &self,
+        ctx: &crate::actions::AppContext,
+        path: PathBuf,
+    ) -> Result<Pipeline> {
+        let action = crate::actions::ReadConfig { path };
+        let content = action
+            .run(ctx)
+            .with_context(|| "Could not read pipeline file".to_string())?;
+        let mut env = Self::load_env_file(Path::new(".env"))?;
+        env.extend(Self::load_env_file(Path::new(".env.local"))?);
+        let content = interpolate_env(&content, |name| {
+            env::var(name).ok().or_else(|| env.get(name).cloned())
+        })?;
+        Self::parse_pipeline(&content)
     }
 
     fn load_env_file(path: &Path) -> Result<HashMap<String, String>> {
@@ -94,15 +126,10 @@ impl Config {
     pub fn resolve_pipeline(
         &self,
         ctx: &crate::actions::AppContext,
-        name: &str,
+        pipeline: &Pipeline,
     ) -> Result<ResolvedPipeline> {
-        let pipeline = self
-            .pipelines
-            .get(name)
-            .with_context(|| format!("Pipeline '{}' not found in config", name))?;
-
         let max_turns = NonZeroUsize::new(pipeline.max_turns)
-            .with_context(|| format!("Pipeline '{}' must set max_turns to at least 1", name))?;
+            .context("Pipeline must set max_turns to at least 1")?;
 
         let mut resolved = Vec::new();
         for step in &pipeline.aspects {
@@ -219,7 +246,7 @@ mod tests {
         let ctx = crate::actions::AppContext;
 
         let resolved = config
-            .resolve_pipeline(&ctx, "test")
+            .resolve_pipeline(&ctx, config.pipelines.get("test").expect("test pipeline"))
             .expect("pipeline should resolve");
         assert_eq!(resolved.aspects.len(), 1);
         assert_eq!(resolved.aspects[0].id, "1");
@@ -254,18 +281,10 @@ mod tests {
         let ctx = crate::actions::AppContext;
 
         let resolved = config
-            .resolve_pipeline(&ctx, "test")
+            .resolve_pipeline(&ctx, config.pipelines.get("test").expect("test pipeline"))
             .expect("pipeline should resolve");
         assert_eq!(resolved.aspects.len(), 1);
         assert_eq!(resolved.aspects[0].id, "ref-1");
-    }
-
-    #[test]
-    fn test_resolve_pipeline_missing() {
-        let config = Config::default();
-        let ctx = crate::actions::AppContext;
-        let result = config.resolve_pipeline(&ctx, "nonexistent");
-        assert!(result.is_err());
     }
 
     #[test]
@@ -292,7 +311,7 @@ mod tests {
         let ctx = crate::actions::AppContext;
 
         let resolved = config
-            .resolve_pipeline(&ctx, "test")
+            .resolve_pipeline(&ctx, config.pipelines.get("test").expect("test pipeline"))
             .expect("pipeline should resolve");
         assert_eq!(resolved.aspects[0].model, Some("custom-model".to_string()));
     }
@@ -328,8 +347,28 @@ mod tests {
         };
         let ctx = crate::actions::AppContext;
 
-        let result = config.resolve_pipeline(&ctx, "test");
+        let result =
+            config.resolve_pipeline(&ctx, config.pipelines.get("test").expect("test pipeline"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_pipeline_file() {
+        let pipeline = Config::parse_pipeline(
+            r#"
+                [pipeline]
+                max_turns = 4
+
+                [[pipeline.aspects]]
+                id = "worker"
+                name = "Worker"
+                prompt = "Prompt"
+            "#,
+        )
+        .expect("pipeline file should parse");
+
+        assert_eq!(pipeline.max_turns, 4);
+        assert_eq!(pipeline.aspects.len(), 1);
     }
 
     #[test]
@@ -388,5 +427,17 @@ mod tests {
             env.get("PIPER_DEFAULT_MODEL"),
             Some(&"local-model".to_string())
         );
+    }
+
+    #[test]
+    fn test_pipeline_file_requires_pipeline_table() {
+        let result = Config::parse_pipeline(
+            r#"
+                [pipelines.legacy]
+                max_turns = 1
+            "#,
+        );
+
+        assert!(result.is_err());
     }
 }
