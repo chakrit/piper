@@ -88,8 +88,16 @@ cargo run -- --file piper.toml run tests/pipelines/smoke.toml \
 
 `--file` explicitly selects the shared runtime configuration. When it is omitted, Piper
 searches the current directory and its ancestors for the nearest `piper.toml`. The
-positional path after `run` selects a pipeline file. `--prompts` can select a different
-Worker-template directory and defaults to `prompts`.
+positional path after `run` selects a pipeline file. Piper embeds its default Worker
+templates, so an installed binary can run outside this checkout. `--prompts` replaces the
+defaults with templates from a selected directory.
+
+Print the effective configuration after environment interpolation, defaults, and
+file-backed Aspect resolution:
+
+```bash
+cargo run -- --file piper.toml config tests/pipelines/smoke.toml
+```
 
 Runtime configuration supports `${VAR}` interpolation. Beside the selected shared
 configuration, Piper loads `.env`, then `.env.local`; process environment values take
@@ -158,7 +166,7 @@ For concise design rules, see
 - `src/config.rs` — TOML loading, environment interpolation, and Aspect resolution.
 - `src/llm.rs` — invocation of the configured external LLM command.
 - `src/actions/` — filesystem reads and mutations.
-- `prompts/` — runtime Worker and recovery templates.
+- `prompts/` — source files for the embedded Worker and recovery templates.
 - `tests/pipelines/` — executable pipeline fixtures and examples.
 - `docs/` — specifications, decisions, guides, and design notes.
 

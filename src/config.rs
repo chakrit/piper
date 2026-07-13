@@ -72,6 +72,20 @@ pub struct ResolvedPipeline {
     pub max_recoveries: usize,
 }
 
+#[derive(Debug, Serialize)]
+pub struct EffectiveConfig {
+    pub llm: LlmConfig,
+    pub pipeline: EffectivePipeline,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EffectivePipeline {
+    pub id: String,
+    pub max_turns: usize,
+    pub max_recoveries: usize,
+    pub aspects: Vec<Aspect>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AspectStep {
@@ -173,6 +187,25 @@ impl Config {
             aspects: resolved,
             max_turns,
             max_recoveries: pipeline.max_recoveries,
+        })
+    }
+
+    pub fn into_effective(
+        self,
+        ctx: &crate::actions::AppContext,
+        pipeline: &Pipeline,
+    ) -> Result<EffectiveConfig> {
+        let resolved = self.resolve_pipeline(ctx, pipeline)?;
+        let pipeline = EffectivePipeline {
+            id: resolved.id.as_str().to_string(),
+            max_turns: resolved.max_turns.get(),
+            max_recoveries: resolved.max_recoveries,
+            aspects: resolved.aspects,
+        };
+
+        Ok(EffectiveConfig {
+            llm: self.llm,
+            pipeline,
         })
     }
 }

@@ -168,6 +168,104 @@ fn assert_success(output: &std::process::Output) {
 }
 
 #[test]
+fn cli_prints_effective_configuration() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let project = temp_dir.path().join("project");
+    fs::create_dir(&project).expect("project directory should be created");
+    fs::write(
+        project.join("piper.toml"),
+        r#"[llm]
+invocation = "${PIPER_LLM_INVOCATION}"
+default_model = "${PIPER_DEFAULT_MODEL}"
+"#,
+    )
+    .expect("shared config should be written");
+    fs::write(
+        project.join(".env"),
+        "PIPER_LLM_INVOCATION=from-env {{prompt}}\nPIPER_DEFAULT_MODEL=env-model\n",
+    )
+    .expect("environment defaults should be written");
+    fs::write(
+        project.join(".env.local"),
+        "PIPER_DEFAULT_MODEL=local-model\n",
+    )
+    .expect("local environment overrides should be written");
+    fs::write(
+        project.join("review.toml"),
+        r#"id = "review"
+name = "Review"
+prompt = "Review the request."
+"#,
+    )
+    .expect("aspect config should be written");
+    fs::write(
+        project.join("pipeline.toml"),
+        r#"[pipeline]
+id = "effective"
+
+[[pipeline.aspects]]
+file = "review.toml"
+"#,
+    )
+    .expect("pipeline config should be written");
+
+    let output = piper_command(temp_dir.path())
+        .current_dir(&project)
+        .args(["config", "pipeline.toml"])
+        .env("PIPER_DEFAULT_MODEL", "process-model")
+        .output()
+        .expect("piper CLI should run");
+
+    assert_success(&output);
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8");
+    let effective: toml::Value = toml::from_str(&stdout).expect("stdout should be TOML");
+    assert_eq!(
+        effective["llm"]["invocation"].as_str(),
+        Some("from-env {{prompt}}")
+    );
+    assert_eq!(
+        effective["llm"]["default_model"].as_str(),
+        Some("process-model")
+    );
+    assert_eq!(effective["pipeline"]["id"].as_str(), Some("effective"));
+    assert_eq!(effective["pipeline"]["max_turns"].as_integer(), Some(100));
+    assert_eq!(
+        effective["pipeline"]["max_recoveries"].as_integer(),
+        Some(3)
+    );
+    assert_eq!(
+        effective["pipeline"]["aspects"][0]["id"].as_str(),
+        Some("review")
+    );
+}
+
+#[test]
+fn cli_uses_embedded_prompt_templates_outside_repository() {
+    let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let llm = write_test_llm(temp_dir.path());
+
+    let output = piper_command(temp_dir.path())
+        .current_dir(temp_dir.path())
+        .arg("--file")
+        .arg(repository.join("piper.toml"))
+        .arg("run")
+        .arg(repository.join("tests/pipelines/black-box.toml"))
+        .arg("Run outside the repository")
+        .env(
+            "PIPER_LLM_INVOCATION",
+            format!("{} {{{{prompt}}}}", llm.display()),
+        )
+        .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")
+        .env("XDG_STATE_HOME", temp_dir.path().join("state"))
+        .output()
+        .expect("piper CLI should run");
+
+    assert_success(&output);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Black-box success"));
+}
+
+#[test]
 fn cli_runs_pipeline_incrementally() {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let llm = write_test_llm(temp_dir.path());

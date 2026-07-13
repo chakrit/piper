@@ -89,12 +89,21 @@ prompt = ""
 
 The `run` command accepts a pipeline TOML path followed by the immutable Request and an
 optional `--prompts` directory. The Request includes the desired outcome rather than
-splitting it into a separate Goal field. Its default prompt directory is `prompts`.
+splitting it into a separate Goal field. Piper uses its embedded Worker templates by
+default; `--prompts` replaces both templates with files from the selected directory.
 `--file` explicitly selects the shared configuration file; when omitted, Piper searches
 the current directory and its ancestors for the nearest `piper.toml`. For example:
 
 ```text
 piper --file piper.toml run pipeline.toml "Review this change for security regressions."
+```
+
+The `config` command accepts a pipeline TOML path and prints the effective configuration
+as TOML. Its output includes environment interpolation, default values, and resolved
+file-backed Aspects:
+
+```text
+piper --file piper.toml config pipeline.toml
 ```
 
 ## Worker DSL
@@ -186,6 +195,9 @@ root Aspects never start before all child work is complete and joined. Selective
 merges are deliberately deferred until there is a concrete need for them.
 
 ## Templates
+
+The built-in templates are compiled into the binary. A custom `--prompts` directory must
+contain both files below.
 
 | Template | Role | Variables |
 | --- | --- | --- |

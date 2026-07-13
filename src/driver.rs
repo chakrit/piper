@@ -1,15 +1,14 @@
 use crate::dsl::AspectAction;
 use crate::llm::LlmClient;
 use crate::models::AspectType;
+use crate::prompt_templates::PromptTemplates;
 use crate::state::PipelineState;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use dialoguer::Select;
-use std::fs;
-use std::path::PathBuf;
 
 pub struct Driver<C: LlmClient> {
     client: C,
-    prompt_dir: PathBuf,
+    prompt_templates: PromptTemplates,
 }
 
 #[derive(Debug)]
@@ -25,13 +24,11 @@ pub struct DriveOutcome {
 }
 
 impl<C: LlmClient> Driver<C> {
-    pub fn new(client: C, prompt_dir: PathBuf) -> Self {
-        Self { client, prompt_dir }
-    }
-
-    fn load_prompt(&self, filename: &str) -> Result<String> {
-        fs::read_to_string(self.prompt_dir.join(filename))
-            .with_context(|| format!("Failed to read prompt template {}", filename))
+    pub fn new(client: C, prompt_templates: PromptTemplates) -> Self {
+        Self {
+            client,
+            prompt_templates,
+        }
     }
 
     fn format_aspect_context(state: &PipelineState) -> String {
@@ -150,7 +147,7 @@ impl<C: LlmClient> Driver<C> {
                 }
                 AspectType::Worker => {
                     state.consume_turn()?;
-                    let template = self.load_prompt("aspect-worker.md")?;
+                    let template = self.prompt_templates.worker(&crate::actions::AppContext)?;
 
                     let context = Self::format_aspect_context(&state);
 
@@ -169,7 +166,8 @@ impl<C: LlmClient> Driver<C> {
                         Err(_) => {
                             state.consume_recovery()?;
                             println!("[Driver] DSL parsing failed. Attempting recovery...");
-                            let recover_template = self.load_prompt("aspect-recover.md")?;
+                            let recover_template =
+                                self.prompt_templates.recover(&crate::actions::AppContext)?;
 
                             let recover_prompt =
                                 format!("{}\n\nBad Response:\n{}", recover_template, raw_response);
@@ -300,7 +298,7 @@ mod tests {
             ]),
         };
 
-        let driver = Driver::new(client, temp_dir);
+        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
         let state = PipelineState::new(
             pipeline_id(),
             "Request".to_string(),
@@ -335,7 +333,10 @@ mod tests {
         let client = MockLlmClient {
             responses: Mutex::new(Vec::new()),
         };
-        let driver = Driver::new(client, temp_dir.path().to_path_buf());
+        let driver = Driver::new(
+            client,
+            PromptTemplates::directory(temp_dir.path().to_path_buf()),
+        );
         let state = PipelineState::new(
             pipeline_id(),
             "Approve the release".to_string(),
@@ -378,7 +379,10 @@ mod tests {
             ]),
             prompts: Mutex::new(Vec::new()),
         };
-        let driver = Driver::new(client, temp_dir.path().to_path_buf());
+        let driver = Driver::new(
+            client,
+            PromptTemplates::directory(temp_dir.path().to_path_buf()),
+        );
         let state = PipelineState::new(
             pipeline_id(),
             "Write a short story".to_string(),
@@ -439,7 +443,7 @@ mod tests {
         let client = MockLlmClient {
             responses: Mutex::new(vec![jump_response.clone(), jump_response]),
         };
-        let driver = Driver::new(client, temp_dir);
+        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
@@ -474,7 +478,10 @@ mod tests {
                 "CONTINUE".to_string(),
             ]),
         };
-        let driver = Driver::new(client, temp_dir.path().to_path_buf());
+        let driver = Driver::new(
+            client,
+            PromptTemplates::directory(temp_dir.path().to_path_buf()),
+        );
         let state = PipelineState::new(
             pipeline_id(),
             "Verify the answer".to_string(),
@@ -510,7 +517,7 @@ mod tests {
         let client = MockLlmClient {
             responses: Mutex::new(vec!["not a DSL action".to_string(), recovered_response]),
         };
-        let driver = Driver::new(client, temp_dir);
+        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
@@ -544,7 +551,7 @@ mod tests {
             ]),
             prompts: Mutex::new(Vec::new()),
         };
-        let driver = Driver::new(client, temp_dir);
+        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
@@ -595,7 +602,7 @@ mod tests {
             ]),
             prompts: Mutex::new(Vec::new()),
         };
-        let driver = Driver::new(client, temp_dir);
+        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
         let state = PipelineState::new(
             pipeline_id(),
             "Keep this request intact".to_string(),
@@ -647,7 +654,7 @@ mod tests {
         let client = MockLlmClient {
             responses: Mutex::new(vec!["STOP Missing requirements".to_string()]),
         };
-        let driver = Driver::new(client, temp_dir);
+        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
@@ -680,7 +687,7 @@ mod tests {
                 "DONE Parent complete".to_string(),
             ]),
         };
-        let driver = Driver::new(client, temp_dir);
+        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),

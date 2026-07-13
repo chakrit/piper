@@ -11,6 +11,7 @@ mod dsl;
 mod identifier;
 mod llm;
 mod models;
+mod prompt_templates;
 mod state;
 
 use actions::{AppContext, EnsureProject, ResolveProject, WriteConfig};
@@ -31,6 +32,11 @@ struct Cli {
 enum Commands {
     /// Scaffold basic TOML settings
     Init,
+    /// Print the effective configuration for a pipeline
+    Config {
+        /// TOML file containing the pipeline to resolve
+        pipeline_file: PathBuf,
+    },
     /// Run a pipeline
     Run {
         /// TOML file containing the pipeline to run
@@ -40,8 +46,8 @@ enum Commands {
         request: String,
 
         /// Directory containing prompt templates
-        #[arg(short, long, default_value = "prompts")]
-        prompts: PathBuf,
+        #[arg(short, long)]
+        prompts: Option<PathBuf>,
     },
 }
 
@@ -64,6 +70,19 @@ fn main() -> Result<()> {
             };
             action.run(&ctx)?;
             println!("Created {:?} with default settings.", config_file);
+        }
+        Commands::Config { pipeline_file } => {
+            let cwd = std::env::current_dir()?;
+            let project = ResolveProject {
+                config: cli.config_file,
+                cwd,
+            }
+            .run(&ctx)?;
+            let config = config::Config::load(&ctx, project.config)?;
+            let pipeline = config.load_pipeline(&ctx, pipeline_file)?;
+            let effective = config.into_effective(&ctx, &pipeline)?;
+
+            print!("{}", toml::to_string_pretty(&effective)?);
         }
         Commands::Run {
             pipeline_file,
@@ -98,8 +117,12 @@ fn main() -> Result<()> {
                 system_prompt: config.llm.system_prompt,
                 default_model: config.llm.default_model,
             };
+            let prompt_templates = match prompts {
+                Some(directory) => prompt_templates::PromptTemplates::directory(directory),
+                None => prompt_templates::PromptTemplates::embedded(),
+            };
 
-            let driver = Driver::new(client, prompts);
+            let driver = Driver::new(client, prompt_templates);
             let results = driver.run(state)?;
 
             println!("\n--- FINAL OUTPUTS ---");
