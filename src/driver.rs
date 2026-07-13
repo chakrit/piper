@@ -1,7 +1,7 @@
 use crate::dsl::AspectAction;
 use crate::llm::LlmClient;
 use crate::models::AspectType;
-use crate::state::{PipelineState, SessionContext};
+use crate::state::PipelineState;
 use anyhow::{Context, Result};
 use dialoguer::Select;
 use std::fs;
@@ -22,59 +22,6 @@ pub enum DriveStatus {
 pub struct DriveOutcome {
     pub state: PipelineState,
     pub status: DriveStatus,
-}
-
-pub enum Checkpoint<'a> {
-    Calling {
-        prompt: &'a str,
-        model: Option<&'a str>,
-        recovery: bool,
-    },
-    Responded {
-        raw_response: &'a str,
-    },
-    Applied {
-        transition: &'a str,
-    },
-    WaitingAtGate,
-}
-
-pub trait Checkpointer {
-    fn checkpoint(
-        &mut self,
-        ctx: &SessionContext,
-        state: &PipelineState,
-        event: Checkpoint<'_>,
-    ) -> Result<()>;
-}
-
-struct NoopCheckpointer;
-
-impl Checkpointer for NoopCheckpointer {
-    fn checkpoint(
-        &mut self,
-        _ctx: &SessionContext,
-        _state: &PipelineState,
-        event: Checkpoint<'_>,
-    ) -> Result<()> {
-        match event {
-            Checkpoint::Calling {
-                prompt,
-                model,
-                recovery,
-            } => {
-                let _ = (prompt, model, recovery);
-            }
-            Checkpoint::Responded { raw_response } => {
-                let _ = raw_response;
-            }
-            Checkpoint::Applied { transition } => {
-                let _ = transition;
-            }
-            Checkpoint::WaitingAtGate => {}
-        }
-        Ok(())
-    }
 }
 
 impl<C: LlmClient> Driver<C> {
@@ -144,9 +91,9 @@ impl<C: LlmClient> Driver<C> {
         }
     }
 
-    pub fn run(&self, ctx: &mut SessionContext, mut state: PipelineState) -> Result<Vec<String>> {
+    pub fn run(&self, mut state: PipelineState) -> Result<Vec<String>> {
         loop {
-            let outcome = self.drive(ctx, state)?;
+            let outcome = self.drive(state)?;
             state = outcome.state;
             match outcome.status {
                 DriveStatus::WaitingAtGate => {
@@ -165,16 +112,9 @@ impl<C: LlmClient> Driver<C> {
         }
     }
 
-    pub fn drive(&self, ctx: &mut SessionContext, state: PipelineState) -> Result<DriveOutcome> {
-        self.drive_with(ctx, state, &mut NoopCheckpointer)
-    }
+    pub fn drive(&self, mut state: PipelineState) -> Result<DriveOutcome> {
+        state.validate()?;
 
-    pub fn drive_with(
-        &self,
-        ctx: &mut SessionContext,
-        mut state: PipelineState,
-        checkpointer: &mut impl Checkpointer,
-    ) -> Result<DriveOutcome> {
         loop {
             if state.frame().current_index >= state.aspects.len() {
                 if state.is_root() {
@@ -190,8 +130,7 @@ impl<C: LlmClient> Driver<C> {
             let aspect = state.current_aspect().clone();
             let fork_info = state
                 .frame()
-                .fork_id
-                .as_ref()
+                .fork_id()
                 .map(|id| format!("[Fork: {}]", id))
                 .unwrap_or_default();
             println!(
@@ -204,14 +143,13 @@ impl<C: LlmClient> Driver<C> {
 
             match aspect.aspect_type {
                 AspectType::Gate => {
-                    checkpointer.checkpoint(ctx, &state, Checkpoint::WaitingAtGate)?;
                     return Ok(DriveOutcome {
                         state,
                         status: DriveStatus::WaitingAtGate,
                     });
                 }
                 AspectType::Worker => {
-                    ctx.consume_turn(state.max_turns)?;
+                    state.consume_turn()?;
                     let template = self.load_prompt("aspect-worker.md")?;
 
                     let context = Self::format_aspect_context(&state);
@@ -221,59 +159,23 @@ impl<C: LlmClient> Driver<C> {
                         .replace("{{aspect_prompt}}", &aspect.prompt)
                         .replace("{{aspect_id}}", &aspect.id)
                         .replace("{{request}}", &state.request)
-                        .replace(
-                            "{{fork_prompt}}",
-                            state.frame().fork_prompt.as_deref().unwrap_or(""),
-                        )
+                        .replace("{{fork_prompt}}", state.frame().fork_prompt().unwrap_or(""))
                         .replace("{{context}}", &context);
 
-                    checkpointer.checkpoint(
-                        ctx,
-                        &state,
-                        Checkpoint::Calling {
-                            prompt: &prompt,
-                            model: aspect.model.as_deref(),
-                            recovery: false,
-                        },
-                    )?;
                     let raw_response = self.client.call(&prompt, aspect.model.as_deref())?;
-                    checkpointer.checkpoint(
-                        ctx,
-                        &state,
-                        Checkpoint::Responded {
-                            raw_response: &raw_response,
-                        },
-                    )?;
 
-                    let (action, accepted_transition) = match AspectAction::parse(&raw_response) {
-                        Ok(action) => (action, raw_response.clone()),
+                    let action = match AspectAction::parse(&raw_response) {
+                        Ok(action) => action,
                         Err(_) => {
-                            ctx.consume_recovery(state.max_recoveries)?;
+                            state.consume_recovery()?;
                             println!("[Driver] DSL parsing failed. Attempting recovery...");
                             let recover_template = self.load_prompt("aspect-recover.md")?;
 
                             let recover_prompt =
                                 format!("{}\n\nBad Response:\n{}", recover_template, raw_response);
-                            checkpointer.checkpoint(
-                                ctx,
-                                &state,
-                                Checkpoint::Calling {
-                                    prompt: &recover_prompt,
-                                    model: aspect.model.as_deref(),
-                                    recovery: true,
-                                },
-                            )?;
                             let recovered_raw =
                                 self.client.call(&recover_prompt, aspect.model.as_deref())?;
-                            checkpointer.checkpoint(
-                                ctx,
-                                &state,
-                                Checkpoint::Responded {
-                                    raw_response: &recovered_raw,
-                                },
-                            )?;
-                            let action = AspectAction::parse(&recovered_raw)?;
-                            (action, recovered_raw)
+                            AspectAction::parse(&recovered_raw)?
                         }
                     };
 
@@ -312,13 +214,6 @@ impl<C: LlmClient> Driver<C> {
                             }
                         }
                     }
-                    checkpointer.checkpoint(
-                        ctx,
-                        &state,
-                        Checkpoint::Applied {
-                            transition: &accepted_transition,
-                        },
-                    )?;
                     if let Some(status) = terminal {
                         return Ok(DriveOutcome { state, status });
                     }
@@ -339,8 +234,13 @@ impl<C: LlmClient> Driver<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identifier::PipelineId;
     use crate::models::{Aspect, AspectType};
     use std::sync::Mutex;
+
+    fn pipeline_id() -> PipelineId {
+        PipelineId::new("test-pipeline").expect("test pipeline ID should be valid")
+    }
 
     struct MockLlmClient {
         responses: Mutex<Vec<String>>,
@@ -359,35 +259,6 @@ mod tests {
     struct RecordingMockLlmClient {
         responses: Mutex<Vec<String>>,
         prompts: Mutex<Vec<String>>,
-    }
-
-    #[derive(Default)]
-    struct RecordingCheckpointer {
-        events: Vec<String>,
-    }
-
-    impl Checkpointer for RecordingCheckpointer {
-        fn checkpoint(
-            &mut self,
-            _ctx: &SessionContext,
-            state: &PipelineState,
-            event: Checkpoint<'_>,
-        ) -> Result<()> {
-            let event = match event {
-                Checkpoint::Calling { recovery, .. } => format!("calling:{recovery}"),
-                Checkpoint::Responded { raw_response } => {
-                    format!("responded:{}", raw_response.trim())
-                }
-                Checkpoint::Applied { transition } => format!(
-                    "applied:{}:{}",
-                    transition.trim(),
-                    state.frame().corpus.len()
-                ),
-                Checkpoint::WaitingAtGate => "gate".to_string(),
-            };
-            self.events.push(event);
-            Ok(())
-        }
     }
 
     impl LlmClient for RecordingMockLlmClient {
@@ -430,8 +301,8 @@ mod tests {
         };
 
         let driver = Driver::new(client, temp_dir);
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Request".to_string(),
             vec![
                 Aspect {
@@ -453,7 +324,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(&mut ctx, state).unwrap();
+        let results = driver.run(state).expect("run should succeed");
 
         assert_eq!(results, vec!["Parent Final"]);
     }
@@ -465,8 +336,8 @@ mod tests {
             responses: Mutex::new(Vec::new()),
         };
         let driver = Driver::new(client, temp_dir.path().to_path_buf());
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Approve the release".to_string(),
             vec![Aspect {
                 id: "approval".to_string(),
@@ -475,60 +346,15 @@ mod tests {
                 prompt: String::new(),
                 model: None,
             }],
-            std::num::NonZeroUsize::new(1).unwrap(),
+            std::num::NonZeroUsize::new(1).expect("turn limit should be non-zero"),
             0,
         );
 
-        let outcome = driver.drive(&mut ctx, state).expect("drive should pause");
+        let outcome = driver.drive(state).expect("drive should pause");
 
         assert!(matches!(outcome.status, DriveStatus::WaitingAtGate));
         assert_eq!(outcome.state.frame().current_index, 0);
         assert_eq!(outcome.state.current_aspect().id, "approval");
-    }
-
-    #[test]
-    fn test_drive_checkpoints_call_response_and_applied_transition_in_order() {
-        let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
-        std::fs::write(temp_dir.path().join("aspect-worker.md"), "{{context}}")
-            .expect("worker template should be written");
-        let client = MockLlmClient {
-            responses: Mutex::new(vec![
-                "SET durable evidence".to_string(),
-                "DONE complete".to_string(),
-            ]),
-        };
-        let driver = Driver::new(client, temp_dir.path().to_path_buf());
-        let mut ctx = SessionContext::new();
-        let state = PipelineState::new(
-            "Request".to_string(),
-            vec![Aspect {
-                id: "worker".to_string(),
-                name: "Worker".to_string(),
-                aspect_type: AspectType::Worker,
-                prompt: "Work".to_string(),
-                model: None,
-            }],
-            std::num::NonZeroUsize::new(2).unwrap(),
-            0,
-        );
-        let mut checkpointer = RecordingCheckpointer::default();
-
-        let outcome = driver
-            .drive_with(&mut ctx, state, &mut checkpointer)
-            .expect("drive should complete");
-
-        assert!(matches!(outcome.status, DriveStatus::Done(_)));
-        assert_eq!(
-            checkpointer.events,
-            [
-                "calling:false",
-                "responded:SET durable evidence",
-                "applied:SET durable evidence:1",
-                "calling:false",
-                "responded:DONE complete",
-                "applied:DONE complete:1",
-            ]
-        );
     }
 
     #[test]
@@ -553,8 +379,8 @@ mod tests {
             prompts: Mutex::new(Vec::new()),
         };
         let driver = Driver::new(client, temp_dir.path().to_path_buf());
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Write a short story".to_string(),
             vec![
                 Aspect {
@@ -576,7 +402,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(&mut ctx, state).expect("run should succeed");
+        let results = driver.run(state).expect("run should succeed");
         assert_eq!(results, vec!["Lyra crossed the moonlit bridge."]);
 
         let prompts = driver
@@ -614,8 +440,8 @@ mod tests {
             responses: Mutex::new(vec![jump_response.clone(), jump_response]),
         };
         let driver = Driver::new(client, temp_dir);
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Initial".to_string(),
             vec![Aspect {
                 id: "a1".to_string(),
@@ -629,7 +455,7 @@ mod tests {
         );
 
         let error = driver
-            .run(&mut ctx, state)
+            .run(state)
             .expect_err("loop should hit the turn limit");
         assert!(error.to_string().contains("max_turns limit of 2"));
     }
@@ -649,8 +475,8 @@ mod tests {
             ]),
         };
         let driver = Driver::new(client, temp_dir.path().to_path_buf());
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Verify the answer".to_string(),
             vec![Aspect {
                 id: "verify".to_string(),
@@ -664,7 +490,7 @@ mod tests {
         );
 
         let results = driver
-            .run(&mut ctx, state)
+            .run(state)
             .expect("final Aspect fork should join cleanly");
 
         assert!(results.is_empty());
@@ -685,8 +511,8 @@ mod tests {
             responses: Mutex::new(vec!["not a DSL action".to_string(), recovered_response]),
         };
         let driver = Driver::new(client, temp_dir);
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Initial".to_string(),
             vec![Aspect {
                 id: "a1".to_string(),
@@ -699,9 +525,7 @@ mod tests {
             1,
         );
 
-        let results = driver
-            .run(&mut ctx, state)
-            .expect("recovery should succeed");
+        let results = driver.run(state).expect("recovery should succeed");
         assert_eq!(results, vec!["Recovered result"]);
     }
 
@@ -721,8 +545,8 @@ mod tests {
             prompts: Mutex::new(Vec::new()),
         };
         let driver = Driver::new(client, temp_dir);
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Initial".to_string(),
             vec![Aspect {
                 id: "a1".to_string(),
@@ -735,7 +559,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(&mut ctx, state).expect("run should succeed");
+        let results = driver.run(state).expect("run should succeed");
         assert_eq!(results, vec!["Final result"]);
 
         let prompts = driver
@@ -772,8 +596,8 @@ mod tests {
             prompts: Mutex::new(Vec::new()),
         };
         let driver = Driver::new(client, temp_dir);
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Keep this request intact".to_string(),
             vec![
                 Aspect {
@@ -795,7 +619,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(&mut ctx, state).expect("run should succeed");
+        let results = driver.run(state).expect("run should succeed");
         assert_eq!(results, vec!["Final result"]);
 
         let prompts = driver
@@ -824,8 +648,8 @@ mod tests {
             responses: Mutex::new(vec!["STOP Missing requirements".to_string()]),
         };
         let driver = Driver::new(client, temp_dir);
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Initial".to_string(),
             vec![Aspect {
                 id: "a1".to_string(),
@@ -838,7 +662,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(&mut ctx, state).expect("stop should be clean");
+        let results = driver.run(state).expect("stop should be clean");
         assert!(results.is_empty());
     }
 
@@ -857,8 +681,8 @@ mod tests {
             ]),
         };
         let driver = Driver::new(client, temp_dir);
-        let mut ctx = SessionContext::new();
         let state = PipelineState::new(
+            pipeline_id(),
             "Initial".to_string(),
             vec![
                 Aspect {
@@ -881,7 +705,7 @@ mod tests {
         );
 
         let error = driver
-            .run(&mut ctx, state)
+            .run(state)
             .expect_err("DONE with unjoined fork work should fail");
         assert!(error.to_string().contains("use CONTINUE first"));
     }

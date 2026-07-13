@@ -64,8 +64,9 @@ cargo run -- --file piper.toml run pipelines/review.toml \
   "Produce a safe plan to move the service without breaking its public API."
 ```
 
-The working directory supplies `.env`, then `.env.local`, then process-environment
-overrides. `${NAME}` interpolation is available in configuration and pipeline TOML.
+The selected shared configuration's directory supplies `.env`, then `.env.local`, then
+process-environment overrides. `${NAME}` interpolation is available in configuration and
+pipeline TOML.
 
 ## Make every Aspect narrow
 

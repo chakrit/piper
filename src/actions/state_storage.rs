@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const PROJECT_SCHEMA_VERSION: u32 = 1;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
 struct ProjectMetadata {
     schema_version: u32,
     canonical_root: PathBuf,
@@ -83,12 +83,13 @@ fn atomic_create(path: &Path, content: &[u8]) -> Result<bool> {
             Ok(true)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let _ = fs::remove_file(temporary_path);
+            remove_temporary(&temporary_path)?;
             Ok(false)
         }
         Err(error) => {
-            let _ = fs::remove_file(temporary_path);
-            Err(error).with_context(|| format!("Could not create state file {path:?}"))
+            let error =
+                anyhow::Error::new(error).context(format!("Could not create state file {path:?}"));
+            fail_after_cleanup(&temporary_path, error)
         }
     }
 }
@@ -111,6 +112,10 @@ fn write_temporary(path: &Path, content: &[u8]) -> Result<PathBuf> {
         ));
         match open_private_file(&candidate) {
             Ok(file) => {
+                if let Err(error) = secure_file(&candidate) {
+                    drop(file);
+                    return fail_after_cleanup(&candidate, error);
+                }
                 temporary = Some((candidate, file));
                 break;
             }
@@ -132,8 +137,8 @@ fn write_temporary(path: &Path, content: &[u8]) -> Result<PathBuf> {
         Ok(())
     })();
     if let Err(error) = result {
-        let _ = fs::remove_file(&temporary_path);
-        return Err(error);
+        drop(file);
+        return fail_after_cleanup(&temporary_path, error);
     }
     Ok(temporary_path)
 }
@@ -143,6 +148,19 @@ fn sync_directory(path: &Path) -> Result<()> {
         .with_context(|| format!("Could not open state directory {path:?}"))?
         .sync_all()
         .with_context(|| format!("Could not sync state directory {path:?}"))
+}
+
+fn remove_temporary(path: &Path) -> Result<()> {
+    fs::remove_file(path).with_context(|| format!("Could not remove temporary state file {path:?}"))
+}
+
+fn fail_after_cleanup<T>(path: &Path, error: anyhow::Error) -> Result<T> {
+    match remove_temporary(path) {
+        Ok(()) => Err(error),
+        Err(cleanup_error) => Err(error.context(format!(
+            "Temporary-file cleanup also failed: {cleanup_error:#}"
+        ))),
+    }
 }
 
 fn create_state_directories(project_directory: &Path) -> Result<()> {
@@ -177,6 +195,19 @@ fn open_private_file(path: &Path) -> std::io::Result<File> {
         options.mode(0o600);
     }
     options.open(path)
+}
+
+#[cfg(unix)]
+fn secure_file(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("Could not secure state file {path:?}"))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn secure_file(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -228,7 +259,10 @@ mod tests {
             .expect_err("identity mismatch should fail");
 
         assert!(error.to_string().contains("identity"));
-        assert_eq!(fs::read(path).unwrap(), before);
+        assert_eq!(
+            fs::read(path).expect("metadata should remain readable"),
+            before
+        );
     }
 
     #[test]
@@ -244,7 +278,10 @@ mod tests {
             .expect_err("corrupt metadata should fail");
 
         assert!(error.to_string().contains("parse project metadata"));
-        assert_eq!(fs::read(path).unwrap(), b"not json");
+        assert_eq!(
+            fs::read(path).expect("corrupt metadata should remain readable"),
+            b"not json"
+        );
     }
 
     #[test]
@@ -266,7 +303,10 @@ mod tests {
             .expect_err("unknown schema should fail");
 
         assert!(error.to_string().contains("schema version 2"));
-        assert_eq!(fs::read(path).unwrap(), content);
+        assert_eq!(
+            fs::read(path).expect("future metadata should remain readable"),
+            content
+        );
     }
 
     #[test]
@@ -277,8 +317,16 @@ mod tests {
         assert!(atomic_create(&path, b"first").expect("first create should succeed"));
         assert!(!atomic_create(&path, b"second").expect("second create should be observed"));
 
-        assert_eq!(fs::read(&path).unwrap(), b"first");
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+        assert_eq!(
+            fs::read(&path).expect("created state should be readable"),
+            b"first"
+        );
+        assert_eq!(
+            fs::read_dir(temp.path())
+                .expect("state directory should be readable")
+                .count(),
+            1
+        );
     }
 
     #[cfg(unix)]
@@ -296,13 +344,17 @@ mod tests {
             action.directory.clone(),
         ] {
             assert_eq!(
-                fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+                fs::metadata(directory)
+                    .expect("state directory metadata should be readable")
+                    .permissions()
+                    .mode()
+                    & 0o777,
                 0o700
             );
         }
         assert_eq!(
             fs::metadata(action.directory.join("project.json"))
-                .unwrap()
+                .expect("project metadata permissions should be readable")
                 .permissions()
                 .mode()
                 & 0o777,

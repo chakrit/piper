@@ -87,13 +87,12 @@ fn main() -> Result<()> {
             let pipeline = config.resolve_pipeline(&ctx, &pipeline)?;
 
             let state = PipelineState::new(
+                pipeline.id,
                 request,
                 pipeline.aspects,
                 pipeline.max_turns,
                 pipeline.max_recoveries,
             );
-            let mut ctx = state::SessionContext::new();
-
             let client = llm::ConfigurableLlmClient {
                 invocation: config.llm.invocation,
                 system_prompt: config.llm.system_prompt,
@@ -101,7 +100,7 @@ fn main() -> Result<()> {
             };
 
             let driver = Driver::new(client, prompts);
-            let results = driver.run(&mut ctx, state)?;
+            let results = driver.run(state)?;
 
             println!("\n--- FINAL OUTPUTS ---");
             for (i, res) in results.iter().enumerate() {

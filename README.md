@@ -86,14 +86,15 @@ cargo run -- --file piper.toml run tests/pipelines/smoke.toml \
   "Verify the Piper driver by confirming the Worker protocol."
 ```
 
-`--file` selects the shared runtime configuration and defaults to `piper.toml`. The
+`--file` explicitly selects the shared runtime configuration. When it is omitted, Piper
+searches the current directory and its ancestors for the nearest `piper.toml`. The
 positional path after `run` selects a pipeline file. `--prompts` can select a different
 Worker-template directory and defaults to `prompts`.
 
-Runtime configuration supports `${VAR}` interpolation. Piper loads `.env`, then
-`.env.local`, then process environment values take precedence. The committed `.env`
-contains non-production clone-and-run defaults; use the gitignored `.env.local` for
-personal overrides.
+Runtime configuration supports `${VAR}` interpolation. Beside the selected shared
+configuration, Piper loads `.env`, then `.env.local`; process environment values take
+precedence. The committed `.env` contains non-production clone-and-run defaults; use the
+gitignored `.env.local` for personal overrides.
 
 ## Writing a pipeline
 

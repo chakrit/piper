@@ -108,10 +108,18 @@ mod tests {
         let paths = resolve_with(None, &nested, |name| env.get(name).cloned())
             .expect("project should resolve");
 
-        assert_eq!(paths.root, project.canonicalize().unwrap());
+        assert_eq!(
+            paths.root,
+            project
+                .canonicalize()
+                .expect("project path should canonicalize")
+        );
         assert_eq!(
             paths.config,
-            project.join("piper.toml").canonicalize().unwrap()
+            project
+                .join("piper.toml")
+                .canonicalize()
+                .expect("config path should canonicalize")
         );
     }
 
@@ -128,8 +136,18 @@ mod tests {
         let paths = resolve_with(Some(&config), temp.path(), |name| env.get(name).cloned())
             .expect("project should resolve");
 
-        assert_eq!(paths.root, project.canonicalize().unwrap());
-        assert_eq!(paths.config, config.canonicalize().unwrap());
+        assert_eq!(
+            paths.root,
+            project
+                .canonicalize()
+                .expect("project path should canonicalize")
+        );
+        assert_eq!(
+            paths.config,
+            config
+                .canonicalize()
+                .expect("config path should canonicalize")
+        );
     }
 
     #[test]

@@ -90,7 +90,8 @@ prompt = ""
 The `run` command accepts a pipeline TOML path followed by the immutable Request and an
 optional `--prompts` directory. The Request includes the desired outcome rather than
 splitting it into a separate Goal field. Its default prompt directory is `prompts`.
-`--file` selects the shared configuration file and defaults to `piper.toml`. For example:
+`--file` explicitly selects the shared configuration file; when omitted, Piper searches
+the current directory and its ancestors for the nearest `piper.toml`. For example:
 
 ```text
 piper --file piper.toml run pipeline.toml "Review this change for security regressions."

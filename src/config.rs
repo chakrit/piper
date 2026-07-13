@@ -12,6 +12,8 @@ pub struct Config {
     pub llm: LlmConfig,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub pipelines: HashMap<String, Pipeline>,
+    #[serde(skip)]
+    source_directory: PathBuf,
 }
 
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system_prompt.txt");
@@ -64,6 +66,7 @@ impl Default for Pipeline {
 }
 
 pub struct ResolvedPipeline {
+    pub id: crate::identifier::PipelineId,
     pub aspects: Vec<Aspect>,
     pub max_turns: NonZeroUsize,
     pub max_recoveries: usize,
@@ -78,16 +81,21 @@ pub enum AspectStep {
 
 impl Config {
     pub fn load(ctx: &crate::actions::AppContext, path: PathBuf) -> Result<Self> {
+        let source_directory = path
+            .parent()
+            .context("Configuration path must have a parent directory")?
+            .to_path_buf();
         let action = crate::actions::ReadConfig { path };
         let content = action
             .run(ctx)
             .with_context(|| "Could not read config file".to_string())?;
-        let mut env = Self::load_env_file(Path::new(".env"))?;
-        env.extend(Self::load_env_file(Path::new(".env.local"))?);
+        let env = Self::load_environment(&source_directory)?;
         let content = interpolate_env(&content, |name| {
             env::var(name).ok().or_else(|| env.get(name).cloned())
         })?;
-        Self::parse(&content)
+        let mut config = Self::parse(&content)?;
+        config.source_directory = source_directory;
+        Ok(config)
     }
 
     fn parse(content: &str) -> Result<Self> {
@@ -111,8 +119,7 @@ impl Config {
         let content = action
             .run(ctx)
             .with_context(|| "Could not read pipeline file".to_string())?;
-        let mut env = Self::load_env_file(Path::new(".env"))?;
-        env.extend(Self::load_env_file(Path::new(".env.local"))?);
+        let env = Self::load_environment(&self.source_directory)?;
         let content = interpolate_env(&content, |name| {
             env::var(name).ok().or_else(|| env.get(name).cloned())
         })?;
@@ -129,12 +136,18 @@ impl Config {
         parse_env_file(&content).with_context(|| format!("Failed to parse {:?}", path))
     }
 
+    fn load_environment(directory: &Path) -> Result<HashMap<String, String>> {
+        let mut environment = Self::load_env_file(&directory.join(".env"))?;
+        environment.extend(Self::load_env_file(&directory.join(".env.local"))?);
+        Ok(environment)
+    }
+
     pub fn resolve_pipeline(
         &self,
         ctx: &crate::actions::AppContext,
         pipeline: &Pipeline,
     ) -> Result<ResolvedPipeline> {
-        crate::identifier::validate(&pipeline.id, "pipeline.id")?;
+        let id = crate::identifier::PipelineId::new(&pipeline.id)?;
         let max_turns = NonZeroUsize::new(pipeline.max_turns)
             .context("Pipeline must set max_turns to at least 1")?;
 
@@ -156,6 +169,7 @@ impl Config {
             }
         }
         Ok(ResolvedPipeline {
+            id,
             aspects: resolved,
             max_turns,
             max_recoveries: pipeline.max_recoveries,

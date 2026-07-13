@@ -75,13 +75,15 @@ cargo run -- --file piper.toml run engineering-review.toml \
   "Decide whether adding idempotency keys to POST /payments without changing successful response bodies is specified and safe enough to implement."
 ```
 
-`--file` defaults to `piper.toml`. The positional file after `run` is the pipeline. Use
-`--prompts <directory>` only when running with a custom set of Worker templates; it defaults
-to `prompts`.
+When `--file` is omitted, Piper searches the current directory and its ancestors for the
+nearest `piper.toml`. The positional file after `run` is the pipeline. Use
+`--prompts <directory>` only when running with a custom set of Worker templates; it
+defaults to `prompts`.
 
-Piper loads environment interpolation values from `.env`, then `.env.local`, then the
-process environment. Later sources take precedence. Put personal model or invocation
-overrides in the gitignored `.env.local`, not in the pipeline.
+Beside the selected shared configuration, Piper loads environment interpolation values
+from `.env`, then `.env.local`, then the process environment. Later sources take
+precedence. Put personal model or invocation overrides in the gitignored `.env.local`, not
+in the pipeline.
 
 ## Follow the execution
 

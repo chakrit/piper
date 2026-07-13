@@ -2,6 +2,16 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+fn piper_command(home: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_piper"));
+    command
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", "/usr/bin:/bin")
+        .env("TERM", "dumb");
+    command
+}
+
 fn write_test_llm(dir: &Path) -> std::path::PathBuf {
     let script = dir.join("piper-test-llm");
     fs::write(
@@ -136,7 +146,7 @@ fn run_pipeline(pipeline: &str, request: &str) -> std::process::Output {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let llm = write_test_llm(temp_dir.path());
 
-    Command::new(env!("CARGO_BIN_EXE_piper"))
+    piper_command(temp_dir.path())
         .args(["--file", "piper.toml", "run", pipeline, request])
         .env(
             "PIPER_LLM_INVOCATION",
@@ -161,7 +171,7 @@ fn assert_success(output: &std::process::Output) {
 fn cli_runs_pipeline_incrementally() {
     let temp_dir = tempfile::tempdir().expect("temp dir should be created");
     let llm = write_test_llm(temp_dir.path());
-    let output = Command::new(env!("CARGO_BIN_EXE_piper"))
+    let output = piper_command(temp_dir.path())
         .args([
             "--file",
             "piper.toml",
@@ -208,22 +218,25 @@ default_model = "${PIPER_DEFAULT_MODEL}"
     )
     .expect("project config should be written");
     let llm = write_test_llm(temp_dir.path());
+    fs::write(
+        project.join(".env"),
+        format!(
+            "PIPER_LLM_INVOCATION={} {{{{prompt}}}}\nPIPER_DEFAULT_MODEL=cerebras/gemma-4-31b\n",
+            llm.display()
+        ),
+    )
+    .expect("project environment should be written");
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
     let pipeline = repository.join("tests/pipelines/knowledge-relay.toml");
     let prompts = repository.join("prompts");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_piper"))
+    let output = piper_command(temp_dir.path())
         .current_dir(&nested)
         .arg("run")
         .arg(pipeline)
         .arg("Relay an independently derived token")
         .arg("--prompts")
         .arg(prompts)
-        .env(
-            "PIPER_LLM_INVOCATION",
-            format!("{} {{{{prompt}}}}", llm.display()),
-        )
-        .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")
         .env("XDG_STATE_HOME", temp_dir.path().join("state"))
         .output()
         .expect("piper CLI should run");

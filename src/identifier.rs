@@ -1,5 +1,19 @@
 use anyhow::Result;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PipelineId(String);
+
+impl PipelineId {
+    pub fn new(value: &str) -> Result<Self> {
+        validate(value, "pipeline.id")?;
+        Ok(Self(value.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 pub fn validate(value: &str, name: &str) -> Result<()> {
     let valid = !value.is_empty()
         && value

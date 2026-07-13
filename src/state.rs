@@ -1,57 +1,25 @@
+use crate::identifier::PipelineId;
 use crate::models::Aspect;
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct SessionContext {
-    turns_taken: usize,
-    recoveries_taken: usize,
-}
-
-impl SessionContext {
-    pub fn new() -> Self {
-        Self {
-            turns_taken: 0,
-            recoveries_taken: 0,
-        }
-    }
-
-    pub fn consume_turn(&mut self, max_turns: NonZeroUsize) -> Result<()> {
-        if self.turns_taken >= max_turns.get() {
-            anyhow::bail!("Pipeline exceeded its max_turns limit of {}", max_turns);
-        }
-
-        self.turns_taken += 1;
-        Ok(())
-    }
-
-    pub fn consume_recovery(&mut self, max_recoveries: usize) -> Result<()> {
-        if self.recoveries_taken >= max_recoveries {
-            anyhow::bail!(
-                "Pipeline exceeded its max_recoveries limit of {}",
-                max_recoveries
-            );
-        }
-
-        self.recoveries_taken += 1;
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct CompletedFork {
     pub id: String,
     pub prompt: String,
     pub corpus: HashMap<String, String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug)]
+pub enum FrameScope {
+    Root,
+    Fork { id: String, prompt: String },
+}
+
+#[derive(Debug)]
 pub struct ExecutionFrame {
-    pub fork_id: Option<String>,
-    pub fork_prompt: Option<String>,
-    pub branch_path: Vec<String>,
+    pub scope: FrameScope,
     pub completed_forks: Vec<CompletedFork>,
     pub current_index: usize,
     pub corpus: HashMap<String, String>,
@@ -60,38 +28,57 @@ pub struct ExecutionFrame {
 impl ExecutionFrame {
     fn root() -> Self {
         Self {
-            fork_id: None,
-            fork_prompt: None,
-            branch_path: Vec::new(),
+            scope: FrameScope::Root,
             completed_forks: Vec::new(),
             current_index: 0,
             corpus: HashMap::new(),
         }
     }
+
+    pub fn fork_id(&self) -> Option<&str> {
+        match &self.scope {
+            FrameScope::Root => None,
+            FrameScope::Fork { id, .. } => Some(id),
+        }
+    }
+
+    pub fn fork_prompt(&self) -> Option<&str> {
+        match &self.scope {
+            FrameScope::Root => None,
+            FrameScope::Fork { prompt, .. } => Some(prompt),
+        }
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct PipelineState {
+    pub pipeline_id: PipelineId,
     pub request: String,
     pub aspects: Vec<Aspect>,
     pub frames: Vec<ExecutionFrame>,
     pub max_turns: NonZeroUsize,
     pub max_recoveries: usize,
+    pub turns_taken: usize,
+    pub recoveries_taken: usize,
 }
 
 impl PipelineState {
     pub fn new(
+        pipeline_id: PipelineId,
         request: String,
         aspects: Vec<Aspect>,
         max_turns: NonZeroUsize,
         max_recoveries: usize,
     ) -> Self {
         Self {
+            pipeline_id,
             request,
             aspects,
             frames: vec![ExecutionFrame::root()],
             max_turns,
             max_recoveries,
+            turns_taken: 0,
+            recoveries_taken: 0,
         }
     }
 
@@ -99,6 +86,84 @@ impl PipelineState {
         self.frames
             .last()
             .expect("pipeline always has a root frame")
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(!self.frames.is_empty(), "pipeline state has no root frame");
+        anyhow::ensure!(
+            matches!(self.frames[0].scope, FrameScope::Root),
+            "first execution frame must have root scope"
+        );
+        anyhow::ensure!(
+            self.frames[1..]
+                .iter()
+                .all(|frame| matches!(frame.scope, FrameScope::Fork { .. })),
+            "non-root execution frames must have fork scope"
+        );
+        anyhow::ensure!(
+            self.turns_taken <= self.max_turns.get(),
+            "consumed turns exceed max_turns"
+        );
+        anyhow::ensure!(
+            self.recoveries_taken <= self.max_recoveries,
+            "consumed recoveries exceed max_recoveries"
+        );
+
+        let mut aspect_ids = HashSet::new();
+        for aspect in &self.aspects {
+            crate::identifier::validate(&aspect.id, "aspect ID")?;
+            anyhow::ensure!(
+                aspect_ids.insert(&aspect.id),
+                "duplicate aspect ID '{}'",
+                aspect.id
+            );
+        }
+        for frame in &self.frames {
+            anyhow::ensure!(
+                frame.current_index <= self.aspects.len(),
+                "execution frame has an out-of-range Aspect position"
+            );
+            if let FrameScope::Fork { id, .. } = &frame.scope {
+                crate::identifier::validate(id, "fork ID")?;
+            }
+            let mut fork_ids = HashSet::new();
+            for fork in &frame.completed_forks {
+                crate::identifier::validate(&fork.id, "fork ID")?;
+                anyhow::ensure!(
+                    fork_ids.insert(&fork.id),
+                    "duplicate completed fork ID '{}'",
+                    fork.id
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn consume_turn(&mut self) -> Result<()> {
+        if self.turns_taken >= self.max_turns.get() {
+            anyhow::bail!(
+                "Pipeline '{}' exceeded its max_turns limit of {}",
+                self.pipeline_id.as_str(),
+                self.max_turns
+            );
+        }
+
+        self.turns_taken += 1;
+        Ok(())
+    }
+
+    pub fn consume_recovery(&mut self) -> Result<()> {
+        if self.recoveries_taken >= self.max_recoveries {
+            anyhow::bail!(
+                "Pipeline '{}' exceeded its max_recoveries limit of {}",
+                self.pipeline_id.as_str(),
+                self.max_recoveries
+            );
+        }
+
+        self.recoveries_taken += 1;
+        Ok(())
     }
 
     pub fn frame_mut(&mut self) -> &mut ExecutionFrame {
@@ -113,20 +178,22 @@ impl PipelineState {
 
     pub fn contribution_key(&self) -> String {
         let aspect_id = &self.current_aspect().id;
-        if self.frame().branch_path.is_empty() {
+        let branch_path = self.branch_path();
+        if branch_path.is_empty() {
             return aspect_id.to_string();
         }
 
-        format!("{}/{}", self.frame().branch_path.join("/"), aspect_id)
+        format!("{}/{}", branch_path.join("/"), aspect_id)
     }
 
     pub fn context_path(&self) -> String {
         let aspect_id = &self.current_aspect().id;
-        if self.frame().branch_path.is_empty() {
+        let branch_path = self.branch_path();
+        if branch_path.is_empty() {
             return aspect_id.to_string();
         }
 
-        format!("{aspect_id}/{}", self.frame().branch_path.join("/"))
+        format!("{aspect_id}/{}", branch_path.join("/"))
     }
 
     pub fn current_aspect(&self) -> &Aspect {
@@ -152,16 +219,13 @@ impl PipelineState {
                 .any(|fork| fork.id == id),
             "fork ID '{id}' already exists"
         );
-        let parent = self.frame();
-        let mut branch_path = parent.branch_path.clone();
-        branch_path.push(id.clone());
+        let parent_index = self.frame().current_index;
+        let parent_corpus = self.frame().corpus.clone();
         self.frames.push(ExecutionFrame {
-            fork_id: Some(id),
-            fork_prompt: Some(prompt),
-            branch_path,
+            scope: FrameScope::Fork { id, prompt },
             completed_forks: Vec::new(),
-            current_index: parent.current_index,
-            corpus: parent.corpus.clone(),
+            current_index: parent_index,
+            corpus: parent_corpus,
         });
         Ok(())
     }
@@ -175,6 +239,10 @@ impl PipelineState {
 
     pub fn return_current_fork(&mut self) -> Result<()> {
         anyhow::ensure!(!self.is_root(), "root frame cannot return to a parent");
+        let (id, prompt) = match &self.frame().scope {
+            FrameScope::Root => anyhow::bail!("child frame cannot have root scope"),
+            FrameScope::Fork { id, prompt } => (id.clone(), prompt.clone()),
+        };
         let child = self.frames.pop().expect("non-root frame exists");
         let parent = self.frame_mut();
         let corpus = child
@@ -182,14 +250,17 @@ impl PipelineState {
             .into_iter()
             .filter(|(key, value)| parent.corpus.get(key) != Some(value))
             .collect();
-        parent.completed_forks.push(CompletedFork {
-            id: child.fork_id.context("child frame must have a fork ID")?,
-            prompt: child
-                .fork_prompt
-                .context("child frame must have a fork prompt")?,
-            corpus,
-        });
+        parent
+            .completed_forks
+            .push(CompletedFork { id, prompt, corpus });
         Ok(())
+    }
+
+    fn branch_path(&self) -> Vec<&str> {
+        self.frames
+            .iter()
+            .filter_map(ExecutionFrame::fork_id)
+            .collect()
     }
 }
 
@@ -198,43 +269,14 @@ mod tests {
     use super::*;
     use crate::models::{Aspect, AspectType};
 
-    #[test]
-    fn frame_stack_round_trips_through_json() {
-        let mut state = PipelineState::new(
-            "Request".to_string(),
-            vec![Aspect {
-                id: "research".to_string(),
-                name: "Research".to_string(),
-                aspect_type: AspectType::Worker,
-                prompt: "Find evidence".to_string(),
-                model: None,
-            }],
-            NonZeroUsize::new(8).unwrap(),
-            2,
-        );
-        state
-            .push_fork("market".to_string(), "Study the market".to_string())
-            .unwrap();
-        state
-            .frame_mut()
-            .corpus
-            .insert("market/research".to_string(), "Evidence".to_string());
-
-        let serialized = serde_json::to_vec(&state).expect("state should serialize");
-        let restored: PipelineState =
-            serde_json::from_slice(&serialized).expect("state should deserialize");
-
-        assert_eq!(restored.frames.len(), 2);
-        assert_eq!(restored.context_path(), "research/market");
-        assert_eq!(
-            restored.frame().corpus.get("market/research"),
-            Some(&"Evidence".to_string())
-        );
+    fn pipeline_id() -> PipelineId {
+        PipelineId::new("test-pipeline").expect("test pipeline ID should be valid")
     }
 
     #[test]
     fn nested_frames_return_and_join_without_recursion() {
         let mut state = PipelineState::new(
+            pipeline_id(),
             "Request".to_string(),
             vec![Aspect {
                 id: "research".to_string(),
@@ -243,21 +285,23 @@ mod tests {
                 prompt: "Find evidence".to_string(),
                 model: None,
             }],
-            NonZeroUsize::new(8).unwrap(),
+            NonZeroUsize::new(8).expect("turn limit should be non-zero"),
             2,
         );
         state
             .push_fork("market".to_string(), "Study the market".to_string())
-            .unwrap();
+            .expect("outer fork should start");
         state
             .push_fork("buyers".to_string(), "Study buyers".to_string())
-            .unwrap();
+            .expect("nested fork should start");
         state.frame_mut().corpus.insert(
             "market/buyers/research".to_string(),
             "Buyer evidence".to_string(),
         );
 
-        state.return_current_fork().unwrap();
+        state
+            .return_current_fork()
+            .expect("nested fork should return");
         assert_eq!(state.frames.len(), 2);
         assert_eq!(state.frame().completed_forks[0].id, "buyers");
         state.join_completed_forks();
@@ -265,12 +309,62 @@ mod tests {
             .frame_mut()
             .corpus
             .insert("market/research".to_string(), "Market evidence".to_string());
-        state.return_current_fork().unwrap();
+        state
+            .return_current_fork()
+            .expect("outer fork should return");
 
         assert_eq!(state.frames.len(), 1);
         let returned = &state.frame().completed_forks[0].corpus;
         assert_eq!(returned.len(), 2);
         assert_eq!(returned["market/buyers/research"], "Buyer evidence");
         assert_eq!(returned["market/research"], "Market evidence");
+    }
+
+    #[test]
+    fn pipeline_owns_consumed_budget_counts() {
+        let mut state = PipelineState::new(
+            pipeline_id(),
+            "Request".to_string(),
+            vec![Aspect {
+                id: "worker".to_string(),
+                name: "Worker".to_string(),
+                aspect_type: AspectType::Worker,
+                prompt: "Work".to_string(),
+                model: None,
+            }],
+            NonZeroUsize::new(1).expect("turn limit should be non-zero"),
+            1,
+        );
+
+        state.consume_turn().expect("first turn should fit");
+        state.consume_recovery().expect("first recovery should fit");
+        assert_eq!(state.turns_taken, 1);
+        assert_eq!(state.recoveries_taken, 1);
+        assert!(state.consume_turn().is_err());
+        assert!(state.consume_recovery().is_err());
+    }
+
+    #[test]
+    fn validation_rejects_inconsistent_resumed_frames() {
+        let mut state = PipelineState::new(
+            pipeline_id(),
+            "Request".to_string(),
+            vec![Aspect {
+                id: "worker".to_string(),
+                name: "Worker".to_string(),
+                aspect_type: AspectType::Worker,
+                prompt: "Work".to_string(),
+                model: None,
+            }],
+            NonZeroUsize::new(1).expect("turn limit should be non-zero"),
+            0,
+        );
+        state.frames.push(ExecutionFrame::root());
+
+        let error = state
+            .validate()
+            .expect_err("a root-scoped child frame should fail validation");
+
+        assert!(error.to_string().contains("non-root"));
     }
 }
