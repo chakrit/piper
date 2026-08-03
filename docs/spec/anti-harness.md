@@ -45,6 +45,25 @@ chance of succeeding because each pass demands less breadth. The advantage is no
 small models become universally capable; it is that the system stops spending their
 limited attention on orchestration.
 
+## Alignment by construction
+
+A Worker cannot drift from the workflow because it is never given the room to. It sees one
+Aspect, the immutable Request, the Corpus, and a one-line DSL; it does not hold the
+procedure, choose the next step, or coordinate branches. Every decision the model could
+get wrong about orchestration has already been made in code before the Worker runs.
+
+This reduces the misalignment problem to a single step. A general harness asks the model
+to stay aligned across an entire multi-step procedure it must remember and re-enact, so
+the per-step failure probability compounds over every step. Piper asks only whether one
+narrow Aspect produced one valid contribution; a whole-run misalignment would require the
+same isolated, single-purpose call to fail in the same direction repeatedly, which the
+structure makes unlikely rather than merely discouraged.
+
+The same property relaxes the context budget. Because a Worker never carries the procedure
+or sibling work, its prompt stays small, and a smaller or shorter-context model has enough
+room to do the one job well. Making a step impossible to get structurally wrong and making
+it fit a small context are the same design move.
+
 ## Request, Corpus, and Result
 
 Piper keeps three concerns separate:

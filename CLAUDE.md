@@ -5,6 +5,12 @@ Aspect Workers to an immutable Request, accumulates Knowledge in a shared Corpus
 and supports routing, isolated forks, human gates, bounded execution, and explicit
 completion.
 
+**Piper's first goal is to self-dogfood: Piper develops Piper.** Development runs through a
+Piper pipeline (`ace-piper.toml`, encoding the ACE workflow) with Claude as the Worker
+engine, not through direct harness chats. The ordered path to that — harden the engine,
+then define the pipeline, then switch the drive — and the Phase 2 chat-mode roadmap live in
+[`docs/spec/dogfooding.md`](docs/spec/dogfooding.md).
+
 ## Repository shape
 
 - `src/main.rs`: CLI parsing and `init` / `run` dispatch.

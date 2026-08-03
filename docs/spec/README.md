@@ -29,6 +29,7 @@ doc on the subject already exists, amend that doc instead of writing a second on
 | File                | Covers                                                                   | Status   |
 |---------------------|--------------------------------------------------------------------------|----------|
 | `anti-harness.md`   | Design rationale: why Piper moves orchestration into code, not the model | accepted |
+| `dogfooding.md`     | Self-dogfooding goal, Claude Worker engine, and the phased dev path       | accepted |
 | `aop-engine.md`     | Driver, pipeline config, prompt templates, Worker DSL, corpus/fork rules | accepted |
 | `pipeline-design.md`| Designing Aspect sequences: ordering, principles, and design workflow     | accepted |
 | `run-lifecycle.md`  | Durable run identity, storage, checkpointing, and CLI lifecycle          | accepted |
