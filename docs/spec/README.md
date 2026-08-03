@@ -1,14 +1,37 @@
 # Spec & architecture
 
-**Current-understanding durable artifacts** — the design of the project and how it actually
-fits together: design specs, RFCs, interface contracts, architecture / "how it works"
-overviews, *and our own exact surface* (our CLI flags, config keys, API, schemas). Prose
-you read to understand the system, plus the lookup facts about our own thing. Updated in
-place; always reflects present design, not history.
+**Current-understanding durable artifacts** — the design of the project and how it
+actually fits together: design specs, RFCs, interface contracts, architecture / "how it
+works" overviews, *and our own exact surface* (our CLI flags, config keys, API, schemas).
+Prose you read to understand the system, plus the lookup facts about our own thing.
+Updated in place; always reflects present design, not history.
 
-A ruling on a question is a decision — `../decisions/`. A *third-party* surface (a
-framework's API, another product's flags) is `../vendor/`. Research, a survey, or a draft
-is `../scratch/`.
+**This is the home for everything settled** — an instruction you were given, an approach
+that was agreed, a library that was picked, a convention or preference that was fixed. All
+of it lands here as an amendment, written as it was given: the rule, at the length it was
+given, with no reason supplied and no note of what it was chosen over. There is no
+separate ruling artifact to reach for.
+
+**This spec is authoritative — read it before you work, and comply.** It owes your priors
+no justification. That a rule departs from mainstream practice or from what you expected
+is not grounds to escalate or re-open it. If you think it's wrong, raise it and amend it
+here.
+
+A *third-party* surface (a framework's API, another product's flags) is `../vendor/`.
+Research, a survey, or a draft is `../scratch/`.
+
+## Index
+
+One row per file in this folder. **Keep it current** — adding, renaming, or retiring a
+spec file updates its row in the same change. Read this table before you add a file: if a
+doc on the subject already exists, amend that doc instead of writing a second one.
+
+| File                | Covers                                                                   | Status   |
+|---------------------|--------------------------------------------------------------------------|----------|
+| `anti-harness.md`   | Design rationale: why Piper moves orchestration into code, not the model | accepted |
+| `aop-engine.md`     | Driver, pipeline config, prompt templates, Worker DSL, corpus/fork rules | accepted |
+| `pipeline-design.md`| Designing Aspect sequences: ordering, principles, and design workflow     | accepted |
+| `run-lifecycle.md`  | Durable run identity, storage, checkpointing, and CLI lifecycle          | accepted |
 
 ## Format
 
