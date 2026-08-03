@@ -14,9 +14,9 @@ Keep model invocation and defaults in the shared configuration, normally `piper.
 
 ```toml
 [llm]
-invocation = "opencode run -m {{model}} {{prompt}}"
+invocation = "claude -p --model {{model}} {{prompt}}"
 system_prompt = "You are a precise AOP worker."
-default_model = "cerebras/gemma-4-31b"
+default_model = "sonnet"
 ```
 
 Put the ordered work in a separate pipeline file:

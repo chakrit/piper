@@ -69,8 +69,8 @@ semantics.
 Prerequisites:
 
 - a current stable Rust toolchain;
-- the LLM command configured in `piper.toml` (the committed development defaults invoke
-  OpenCode through values loaded from `.env`).
+- the `claude` CLI on `PATH` (the committed development defaults invoke Claude through
+  values loaded from `.env`).
 
 Build and inspect the CLI:
 

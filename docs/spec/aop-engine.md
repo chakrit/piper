@@ -65,9 +65,9 @@ Aspects default to `worker`; set `type = "gate"` only for gate Aspects.
 
 ```toml
 [llm]
-invocation = "opencode run -m {{model}} {{prompt}}"
+invocation = "claude -p --model {{model}} {{prompt}}"
 system_prompt = "You are a precise AOP worker."
-default_model = "cerebras/gemma-4-31b"
+default_model = "sonnet"
 
 [pipeline]
 id = "security-review"

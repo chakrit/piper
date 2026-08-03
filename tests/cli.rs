@@ -152,7 +152,7 @@ fn run_pipeline(pipeline: &str, request: &str) -> std::process::Output {
             "PIPER_LLM_INVOCATION",
             format!("{} {{{{prompt}}}}", llm.display()),
         )
-        .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")
+        .env("PIPER_DEFAULT_MODEL", "sonnet")
         .env("XDG_STATE_HOME", temp_dir.path().join("state"))
         .output()
         .expect("piper CLI should run")
@@ -273,7 +273,7 @@ fn cli_uses_embedded_prompt_templates_outside_repository() {
             "PIPER_LLM_INVOCATION",
             format!("{} {{{{prompt}}}}", llm.display()),
         )
-        .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")
+        .env("PIPER_DEFAULT_MODEL", "sonnet")
         .env("XDG_STATE_HOME", temp_dir.path().join("state"))
         .output()
         .expect("piper CLI should run");
@@ -298,7 +298,7 @@ fn cli_runs_pipeline_incrementally() {
             "PIPER_LLM_INVOCATION",
             format!("{} {{{{prompt}}}}", llm.display()),
         )
-        .env("PIPER_DEFAULT_MODEL", "cerebras/gemma-4-31b")
+        .env("PIPER_DEFAULT_MODEL", "sonnet")
         .env("XDG_STATE_HOME", temp_dir.path().join("state"))
         .output()
         .expect("piper CLI should run");
@@ -315,7 +315,7 @@ fn cli_runs_pipeline_incrementally() {
     assert!(stdout.contains("Worker 1/3 · Collect Knowledge"));
     assert!(stdout.contains("Context   collect · root"));
     assert!(stdout.contains("Budget    turn 1/8 · recovery 0/3"));
-    assert!(stdout.contains("Model     cerebras/gemma-4-31b"));
+    assert!(stdout.contains("Model     sonnet"));
     assert!(stdout.contains("Action    SET · Alpha requirement"));
     assert!(stdout.contains("Worker 2/3 · Branch Work"));
     assert!(stdout.contains("Context   branch/f1 · fork f1"));
@@ -344,7 +344,7 @@ default_model = "${PIPER_DEFAULT_MODEL}"
     fs::write(
         project.join(".env"),
         format!(
-            "PIPER_LLM_INVOCATION={} {{{{prompt}}}}\nPIPER_DEFAULT_MODEL=cerebras/gemma-4-31b\n",
+            "PIPER_LLM_INVOCATION={} {{{{prompt}}}}\nPIPER_DEFAULT_MODEL=sonnet\n",
             llm.display()
         ),
     )

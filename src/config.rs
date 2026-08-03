@@ -497,8 +497,8 @@ mod tests {
             default_model = "${PIPER_DEFAULT_MODEL}"
         "#;
         let expanded = interpolate_env(content, |name| match name {
-            "PIPER_LLM_INVOCATION" => Some("opencode run -m {{model}} {{prompt}}".to_string()),
-            "PIPER_DEFAULT_MODEL" => Some("cerebras/gemma-4-31b".to_string()),
+            "PIPER_LLM_INVOCATION" => Some("claude -p --model {{model}} {{prompt}}".to_string()),
+            "PIPER_DEFAULT_MODEL" => Some("sonnet".to_string()),
             _ => None,
         })
         .expect("env interpolation should succeed");
@@ -506,9 +506,9 @@ mod tests {
         let config = Config::parse(&expanded).expect("expanded config should parse");
         assert_eq!(
             config.llm.invocation,
-            "opencode run -m {{model}} {{prompt}}"
+            "claude -p --model {{model}} {{prompt}}"
         );
-        assert_eq!(config.llm.default_model, "cerebras/gemma-4-31b");
+        assert_eq!(config.llm.default_model, "sonnet");
     }
 
     #[test]
@@ -516,19 +516,19 @@ mod tests {
         let env = parse_env_file(
             r#"
                 # comment
-                export PIPER_DEFAULT_MODEL=cerebras/gemma-4-31b
-                PIPER_LLM_INVOCATION="opencode run -m {{model}} {{prompt}}"
+                export PIPER_DEFAULT_MODEL=sonnet
+                PIPER_LLM_INVOCATION="claude -p --model {{model}} {{prompt}}"
             "#,
         )
         .expect(".env content should parse");
 
         assert_eq!(
             env.get("PIPER_LLM_INVOCATION"),
-            Some(&"opencode run -m {{model}} {{prompt}}".to_string())
+            Some(&"claude -p --model {{model}} {{prompt}}".to_string())
         );
         assert_eq!(
             env.get("PIPER_DEFAULT_MODEL"),
-            Some(&"cerebras/gemma-4-31b".to_string())
+            Some(&"sonnet".to_string())
         );
     }
 
