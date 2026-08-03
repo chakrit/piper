@@ -54,7 +54,8 @@ modules they cover, and put black-box CLI behavior tests under `tests/`.
 
 ## ACE skills
 
-- `general-coding`: project-wide planning, testing, editing, review, and commit rules.
+- `code`: execution laws — TDD, unit-of-work, naming, commit discipline.
+- `architect`: design laws — abstraction quality, boundaries, API and data shape.
 - `rust-coding`: Rust and Cargo conventions.
 - `ace`: recurring per-task workflow.
 - `ace-save`: durable session handoff.

@@ -1,10 +1,11 @@
 school = "prod9/school"
-backend = "codex"
+backend = "claude"
 skills = [
-    "general-coding",
-    "rust-coding",
-    "ace",
-    "ace-save",
-    "ace-docs",
-    "ace-audit",
+  "code",
+  "architect",
+  "rust-coding",
+  "ace",
+  "ace-save",
+  "ace-docs",
+  "ace-audit",
 ]
