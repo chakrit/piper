@@ -79,12 +79,17 @@ impl<C: LlmClient, K: Checkpointer> Driver<C, K> {
                 self.checkpointer.checkpoint(&snapshot)?;
                 self.drive(snapshot)
             }
-            GateDecision::Abort => {
-                Self::set_terminal(&mut snapshot, TerminalOutcome::Aborted);
-                self.checkpointer.checkpoint(&snapshot)?;
-                Ok(snapshot)
-            }
+            GateDecision::Abort => self.abort(snapshot),
         }
+    }
+
+    /// Record an operator abort on any non-terminal run and checkpoint it. Consumes no
+    /// Worker turn or recovery and does not require the run to be waiting at a gate, so the
+    /// `abort` command can end a run stopped anywhere — at a gate, or interrupted mid-call.
+    pub fn abort(&self, mut snapshot: RunSnapshot) -> Result<RunSnapshot> {
+        Self::set_terminal(&mut snapshot, TerminalOutcome::Aborted);
+        self.checkpointer.checkpoint(&snapshot)?;
+        Ok(snapshot)
     }
 
     fn recover_pending(&self, snapshot: &mut RunSnapshot) -> Result<Recovery> {

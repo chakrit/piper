@@ -87,6 +87,23 @@ impl WriteActivePointer {
     }
 }
 
+/// Why reading a pipeline's `active` pointer did not yield a run identity. `Missing` is a
+/// distinct outcome, not a failure: `start` treats it as "free to begin", while selection
+/// by pipeline id treats it as "no run to act on". The two callers need that split, so it
+/// lives in the type rather than in a stringly-typed error message.
+#[derive(Debug, thiserror::Error)]
+pub enum ActivePointerError {
+    #[error("pipeline {pipeline:?} has no active run")]
+    Missing { pipeline: String },
+    #[error("could not read active pointer {path:?}: {source}")]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("active pointer {path:?} is not a canonical ULID: {message}")]
+    Malformed { path: PathBuf, message: String },
+}
+
 /// Read a pipeline's `active` pointer and parse it back into a run identity.
 pub struct ReadActivePointer {
     pub project_state_dir: PathBuf,
@@ -94,12 +111,87 @@ pub struct ReadActivePointer {
 }
 
 impl ReadActivePointer {
-    pub fn run(&self, _ctx: &AppContext) -> Result<RunId> {
+    pub fn run(&self, _ctx: &AppContext) -> Result<RunId, ActivePointerError> {
         let path = active_path(&self.project_state_dir, &self.pipeline_id);
-        let content =
-            fs::read_to_string(&path).with_context(|| format!("Could not read {path:?}"))?;
-        RunId::parse(content.trim())
-            .with_context(|| format!("Active pointer {path:?} is not a canonical ULID"))
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ActivePointerError::Missing {
+                    pipeline: self.pipeline_id.as_str().to_string(),
+                });
+            }
+            Err(source) => return Err(ActivePointerError::Read { path, source }),
+        };
+        RunId::parse(content.trim()).map_err(|error| ActivePointerError::Malformed {
+            path,
+            message: error.to_string(),
+        })
+    }
+}
+
+/// Enumerate every `(pipeline id, run ULID)` under a project's state directory by reading
+/// the on-disk layout, without opening any snapshot. Directory names that are not valid
+/// pipeline ids and files that are not `<canonical-ulid>.json` are ignored: the layout is a
+/// trust boundary, so only well-formed identities are admitted. Owns the run enumeration.
+pub struct ListProjectRuns {
+    pub project_state_dir: PathBuf,
+}
+
+impl ListProjectRuns {
+    pub fn run(&self, _ctx: &AppContext) -> Result<Vec<(PipelineId, RunId)>> {
+        let pipelines_dir = self.project_state_dir.join("pipelines");
+        let entries = match fs::read_dir(&pipelines_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Could not read pipelines directory {pipelines_dir:?}")
+                });
+            }
+        };
+
+        let mut found = Vec::new();
+        for entry in entries {
+            let entry = entry.context("Could not read a pipelines directory entry")?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Ok(pipeline_id) = PipelineId::new(name) else {
+                continue;
+            };
+            Self::collect_runs(&entry.path().join("runs"), &pipeline_id, &mut found)?;
+        }
+        Ok(found)
+    }
+
+    fn collect_runs(
+        runs_dir: &Path,
+        pipeline_id: &PipelineId,
+        found: &mut Vec<(PipelineId, RunId)>,
+    ) -> Result<()> {
+        let entries = match fs::read_dir(runs_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Could not read runs directory {runs_dir:?}"));
+            }
+        };
+
+        for entry in entries {
+            let path = entry
+                .context("Could not read a runs directory entry")?
+                .path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if let Ok(run_id) = RunId::parse(stem) {
+                found.push((pipeline_id.clone(), run_id));
+            }
+        }
+        Ok(())
     }
 }
 

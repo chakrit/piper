@@ -73,8 +73,6 @@ fn validate_project_metadata(
 /// sibling temp, sync it, rename over the destination, then sync the parent directory. A
 /// failed rename leaves any previous file authoritative. The shared owner for every
 /// durable overwrite; `atomic_create` remains the create-or-observe primitive.
-// Consumed by `run_storage`, which the driver-checkpoint slice wires into live code.
-#[allow(dead_code)]
 pub(super) fn atomic_replace(path: &Path, content: &[u8]) -> Result<()> {
     let parent = path
         .parent()

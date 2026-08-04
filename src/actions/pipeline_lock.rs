@@ -10,10 +10,10 @@ use std::path::PathBuf;
 /// Releasing is automatic: dropping the guard closes the file, and the OS drops the lock
 /// with it. A mutating command keeps this guard alive across its whole operation so no
 /// second mutation on the same pipeline can proceed concurrently.
-// Held by the mutating commands the CLI-lifecycle slice guards; until that wiring lands
-// nothing reads the retained handle, only its RAII drop matters.
-#[allow(dead_code)]
 pub struct PipelineLock {
+    // Held only for its RAII drop: closing this handle releases the OS lock. It is never
+    // read, so the dead-code lint is silenced on this field alone rather than the struct.
+    #[allow(dead_code)]
     file: File,
 }
 

@@ -1,0 +1,30 @@
+[pipeline]
+id = "double-gate"
+max_turns = 8
+
+[[pipeline.aspects]]
+id = "prepare"
+name = "Prepare Release"
+prompt = "Advance toward the first gate."
+
+[[pipeline.aspects]]
+id = "first"
+name = "First Approval"
+type = "gate"
+prompt = "Await operator approval at the first gate."
+
+[[pipeline.aspects]]
+id = "mid"
+name = "Midpoint"
+prompt = "Advance toward the second gate."
+
+[[pipeline.aspects]]
+id = "second"
+name = "Second Approval"
+type = "gate"
+prompt = "Await operator approval at the second gate."
+
+[[pipeline.aspects]]
+id = "ship"
+name = "Ship Release"
+prompt = "Finish the run with a DONE."

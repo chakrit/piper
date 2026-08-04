@@ -12,10 +12,8 @@ pub trait Checkpointer {
 }
 
 /// Persists each checkpoint to the project state directory through the one owning
-/// unit-of-work, `SaveRunSnapshot`.
-// Wired into the attended `run` command by the CLI-lifecycle slice; until then it is
-// exercised only through its own tests.
-#[allow(dead_code)]
+/// unit-of-work, `SaveRunSnapshot`. Every mutating command drives the engine through this
+/// sink, so a crash between checkpoints leaves the last durable snapshot authoritative.
 pub struct DiskCheckpointer {
     pub project_state_dir: PathBuf,
 }
@@ -30,10 +28,12 @@ impl Checkpointer for DiskCheckpointer {
     }
 }
 
-/// Drops every checkpoint. Used by the attended `run` command this slice, before the
-/// CLI-lifecycle slice resolves a run identity and wires the disk-backed sink.
+/// Drops every checkpoint. Tests that exercise the drive path without asserting on the
+/// checkpoint sequence use it in place of the disk-backed sink.
+#[cfg(test)]
 pub struct NoopCheckpointer;
 
+#[cfg(test)]
 impl Checkpointer for NoopCheckpointer {
     fn checkpoint(&self, _snapshot: &RunSnapshot) -> Result<()> {
         Ok(())

@@ -1,0 +1,19 @@
+[pipeline]
+id = "gated"
+max_turns = 8
+
+[[pipeline.aspects]]
+id = "prepare"
+name = "Prepare Release"
+prompt = "Advance toward the approval gate."
+
+[[pipeline.aspects]]
+id = "approval"
+name = "Approval"
+type = "gate"
+prompt = "Await operator approval before shipping."
+
+[[pipeline.aspects]]
+id = "ship"
+name = "Ship Release"
+prompt = "Finish the run with a DONE."
