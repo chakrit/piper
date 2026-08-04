@@ -15,6 +15,9 @@ mod prompt_templates;
 // Consumed by the durable-run storage and CLI slices that follow.
 #[allow(dead_code)]
 mod run_id;
+// Consumed by the durable-run persistence and resume slices that follow.
+#[allow(dead_code)]
+mod run_snapshot;
 mod state;
 
 use actions::{AppContext, EnsureProject, ResolveProject, WriteConfig};
