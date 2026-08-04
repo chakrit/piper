@@ -1,3 +1,6 @@
+// Consumed by the CLI-lifecycle slice that guards mutating commands.
+#[allow(dead_code)]
+pub mod pipeline_lock;
 pub mod read_aspect_file;
 pub mod read_config;
 pub mod read_prompt_template;

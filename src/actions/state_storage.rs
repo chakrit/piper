@@ -229,6 +229,25 @@ fn open_private_file(path: &Path) -> std::io::Result<File> {
     options.open(path)
 }
 
+/// Open `path` for reading and writing, creating it at mode `0600` when absent, then narrow
+/// it to `0600` whether it was just created or already existed. Unlike `open_private_file`,
+/// this tolerates a pre-existing file — the single owner of open-or-create for persistent
+/// private files such as the per-pipeline operation lock.
+pub(super) fn open_or_create_private_file(path: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options
+        .open(path)
+        .with_context(|| format!("Could not open private file {path:?}"))?;
+    secure_file(path)?;
+    Ok(file)
+}
+
 #[cfg(unix)]
 fn secure_file(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
