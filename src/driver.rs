@@ -267,18 +267,8 @@ impl<C: LlmClient> Driver<C> {
                         }
                         AspectAction::Done(result) => {
                             Self::ensure_no_unjoined_forks(&state, "DONE")?;
-                            if state.is_root() {
-                                println!("╰─ Completion accepted");
-                                terminal = Some(DriveStatus::Done(vec![result]));
-                            } else {
-                                let fork_id = state
-                                    .frame()
-                                    .fork_id()
-                                    .expect("non-root frame has a fork ID")
-                                    .to_string();
-                                state.return_current_fork()?;
-                                println!("╰─ Returned completed fork {fork_id}");
-                            }
+                            println!("╰─ Completion accepted");
+                            terminal = Some(DriveStatus::Done(vec![result]));
                         }
                     }
                     if let Some(status) = terminal {
@@ -797,6 +787,40 @@ mod tests {
     }
 
     #[test]
+    fn test_done_inside_fork_terminates_whole_run() {
+        let temp_dir = std::env::temp_dir().join("piper_tests_fork_done");
+        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
+        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
+            .expect("worker template should be written");
+
+        let client = MockLlmClient {
+            responses: Mutex::new(vec![
+                "FORK f1 Explore the alternative".to_string(),
+                "DONE Whole run complete".to_string(),
+            ]),
+        };
+        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let state = PipelineState::new(
+            pipeline_id(),
+            "Initial".to_string(),
+            vec![Aspect {
+                id: "a1".to_string(),
+                name: "Aspect 1".to_string(),
+                aspect_type: AspectType::Worker,
+                prompt: "Prompt".to_string(),
+                model: None,
+            }],
+            std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
+            0,
+        );
+
+        let results = driver
+            .run(state)
+            .expect("child DONE should terminate the whole run");
+        assert_eq!(results, vec!["Whole run complete"]);
+    }
+
+    #[test]
     fn test_done_rejects_unjoined_fork_work() {
         let temp_dir = std::env::temp_dir().join("piper_tests_unjoined_fork");
         std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
@@ -806,7 +830,7 @@ mod tests {
         let client = MockLlmClient {
             responses: Mutex::new(vec![
                 "FORK f1 Analyze the alternative".to_string(),
-                "DONE Child complete".to_string(),
+                "CONTINUE".to_string(),
                 "DONE Parent complete".to_string(),
             ]),
         };
