@@ -21,8 +21,12 @@ mod run_snapshot;
 mod state;
 
 use actions::{AppContext, EnsureProject, ResolveProject, WriteConfig};
-use driver::Driver;
+use dialoguer::Select;
+use driver::{DriveStatus, Driver, GateDecision};
+use llm::LlmClient;
 use state::PipelineState;
+
+use driver::{log_budget_used, log_completed, log_run_started, one_line};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -129,23 +133,84 @@ fn main() -> Result<()> {
             };
 
             let driver = Driver::new(client, prompt_templates);
-            let results = driver.run(state)?;
-
-            if results.is_empty() {
-                println!("\nFinal outputs · none");
-            } else {
-                println!("\n╭─ Final outputs");
-                for (index, result) in results.iter().enumerate() {
-                    println!("│ Output {}", index + 1);
-                    println!("│");
-                    for line in result.lines() {
-                        println!("│ {line}");
-                    }
-                }
-                println!("╰─ End");
-            }
+            run_attended(&driver, state)?;
         }
     }
 
     Ok(())
+}
+
+/// Attended wrapper over the headless engine: drives to each pause, presents any gate
+/// in the terminal, and applies the operator's Continue or Abort. Cancelling the prompt
+/// leaves the run waiting at that gate.
+fn run_attended<C: LlmClient>(driver: &Driver<C>, state: PipelineState) -> Result<()> {
+    log_run_started(&state);
+
+    let mut outcome = driver.advance(state)?;
+    loop {
+        match outcome.status {
+            DriveStatus::WaitingAtGate => {
+                let gate_id = outcome.state.current_aspect().id.clone();
+                let Some(decision) = prompt_gate(&outcome.state)? else {
+                    println!("╰─ Cancelled · run left waiting at gate {gate_id}");
+                    return Ok(());
+                };
+                match decision {
+                    GateDecision::Continue => {
+                        println!("✓ Gate approved · continuing after {gate_id}")
+                    }
+                    GateDecision::Abort => println!("■ Gate aborted · ending run at {gate_id}"),
+                }
+                outcome = driver.resume(outcome.state, decision)?;
+            }
+            DriveStatus::Done(results) => {
+                log_completed(&outcome.state, results.len());
+                print_final_outputs(&results);
+                return Ok(());
+            }
+            DriveStatus::Stopped(reason) => {
+                println!("\n■ Stopped · {}", one_line(&reason));
+                log_budget_used(&outcome.state);
+                return Ok(());
+            }
+            DriveStatus::Aborted => {
+                log_budget_used(&outcome.state);
+                return Ok(());
+            }
+        }
+    }
+}
+
+fn prompt_gate(state: &PipelineState) -> Result<Option<GateDecision>> {
+    println!("│ Request   {}", one_line(&state.request));
+    println!("╰─ Waiting for approval");
+
+    let options = ["Continue", "Abort"];
+    let selection = Select::new()
+        .with_prompt("Choose an action")
+        .items(&options)
+        .interact_opt()?;
+
+    Ok(match selection {
+        Some(0) => Some(GateDecision::Continue),
+        Some(_) => Some(GateDecision::Abort),
+        None => None,
+    })
+}
+
+fn print_final_outputs(results: &[String]) {
+    if results.is_empty() {
+        println!("\nFinal outputs · none");
+        return;
+    }
+
+    println!("\n╭─ Final outputs");
+    for (index, result) in results.iter().enumerate() {
+        println!("│ Output {}", index + 1);
+        println!("│");
+        for line in result.lines() {
+            println!("│ {line}");
+        }
+    }
+    println!("╰─ End");
 }

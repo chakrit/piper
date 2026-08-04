@@ -4,7 +4,6 @@ use crate::models::AspectType;
 use crate::prompt_templates::PromptTemplates;
 use crate::state::PipelineState;
 use anyhow::{Context, Result};
-use dialoguer::Select;
 
 pub struct Driver<C: LlmClient> {
     client: C,
@@ -16,6 +15,15 @@ pub enum DriveStatus {
     WaitingAtGate,
     Done(Vec<String>),
     Stopped(String),
+    Aborted,
+}
+
+/// Operator's decision at a gate, supplied to `resume`. The engine never reads it
+/// from the terminal.
+#[derive(Debug, Clone, Copy)]
+pub enum GateDecision {
+    Continue,
+    Abort,
 }
 
 pub struct DriveOutcome {
@@ -71,51 +79,29 @@ impl<C: LlmClient> Driver<C> {
             .join("\n")
     }
 
-    fn handle_gate(&self, state: &PipelineState) -> Result<bool> {
-        println!("│ Request   {}", Self::one_line(&state.request));
-        println!("╰─ Waiting for approval");
+    /// Resume a run paused at a gate, applying the operator's decision. `Continue`
+    /// steps past the gate and drives to the next pause or terminal status; `Abort`
+    /// ends the run without a Result. Approval is an explicit input, never a terminal
+    /// read.
+    pub fn resume(&self, mut state: PipelineState, decision: GateDecision) -> Result<DriveOutcome> {
+        anyhow::ensure!(
+            matches!(state.current_aspect().aspect_type, AspectType::Gate),
+            "resume requires the run to be waiting at a gate"
+        );
 
-        let options = vec!["Continue", "Abort"];
-        let selection = Select::new()
-            .with_prompt("Choose an action")
-            .items(&options)
-            .interact()?;
-
-        match selection {
-            0 => Ok(true),
-            _ => Ok(false),
-        }
-    }
-
-    pub fn run(&self, mut state: PipelineState) -> Result<Vec<String>> {
-        Self::log_run_started(&state);
-
-        loop {
-            let outcome = self.drive(state)?;
-            state = outcome.state;
-            match outcome.status {
-                DriveStatus::WaitingAtGate => {
-                    let gate_id = state.current_aspect().id.clone();
-                    if !self.handle_gate(&state)? {
-                        anyhow::bail!("Run aborted by user at gate {gate_id}");
-                    }
-                    state.frame_mut().current_index += 1;
-                    println!("✓ Gate approved · continuing after {gate_id}");
-                }
-                DriveStatus::Done(results) => {
-                    Self::log_completed(&state, results.len());
-                    return Ok(results);
-                }
-                DriveStatus::Stopped(reason) => {
-                    println!("\n■ Stopped · {}", Self::one_line(&reason));
-                    Self::log_budget_used(&state);
-                    return Ok(Vec::new());
-                }
+        match decision {
+            GateDecision::Continue => {
+                state.frame_mut().current_index += 1;
+                self.advance(state)
             }
+            GateDecision::Abort => Ok(DriveOutcome {
+                state,
+                status: DriveStatus::Aborted,
+            }),
         }
     }
 
-    pub fn drive(&self, mut state: PipelineState) -> Result<DriveOutcome> {
+    pub fn advance(&self, mut state: PipelineState) -> Result<DriveOutcome> {
         state.validate()?;
 
         loop {
@@ -198,7 +184,7 @@ impl<C: LlmClient> Driver<C> {
                                 "│ Recovery  {}/{} · {}",
                                 state.recoveries_taken, state.max_recoveries, error
                             );
-                            println!("│ Rejected  {}", Self::one_line(&raw_response));
+                            println!("│ Rejected  {}", one_line(&raw_response));
                             let recover_template =
                                 self.prompt_templates.recover(&crate::actions::AppContext)?;
 
@@ -211,7 +197,7 @@ impl<C: LlmClient> Driver<C> {
                                 AspectAction::parse(&recovered_raw).with_context(|| {
                                     format!(
                                         "Recovery response was not valid Piper DSL: {}",
-                                        Self::one_line(&recovered_raw)
+                                        one_line(&recovered_raw)
                                     )
                                 })?;
                             Self::log_action("Recovered", &recovered);
@@ -279,17 +265,6 @@ impl<C: LlmClient> Driver<C> {
         }
     }
 
-    fn log_run_started(state: &PipelineState) {
-        println!("╭─ Piper run · {}", state.pipeline_id.as_str());
-        println!("│ Request   {}", Self::one_line(&state.request));
-        println!("│ Aspects   {}", state.aspects.len());
-        println!(
-            "│ Budgets   {} turns · {} recoveries",
-            state.max_turns, state.max_recoveries
-        );
-        println!("╰─ Starting");
-    }
-
     fn log_aspect_started(state: &PipelineState, kind: &str) {
         println!(
             "\n╭─ {kind} {}/{} · {}",
@@ -312,27 +287,6 @@ impl<C: LlmClient> Driver<C> {
         }
     }
 
-    fn log_completed(state: &PipelineState, output_count: usize) {
-        let output_label = if output_count == 1 {
-            "output"
-        } else {
-            "outputs"
-        };
-        println!("\n✓ Completed · {output_count} {output_label}");
-        Self::log_budget_used(state);
-    }
-
-    fn log_budget_used(state: &PipelineState) {
-        println!(
-            "  Budget used · {}/{} turns · {}/{} recoveries",
-            state.turns_taken, state.max_turns, state.recoveries_taken, state.max_recoveries
-        );
-    }
-
-    fn one_line(value: &str) -> String {
-        value.replace('\r', "\\r").replace('\n', "\\n")
-    }
-
     fn ensure_no_unjoined_forks(state: &PipelineState, action: &str) -> Result<()> {
         if !state.frame().completed_forks.is_empty() {
             anyhow::bail!("{action} cannot discard unjoined fork work; use CONTINUE first");
@@ -340,6 +294,38 @@ impl<C: LlmClient> Driver<C> {
 
         Ok(())
     }
+}
+
+pub fn log_run_started(state: &PipelineState) {
+    println!("╭─ Piper run · {}", state.pipeline_id.as_str());
+    println!("│ Request   {}", one_line(&state.request));
+    println!("│ Aspects   {}", state.aspects.len());
+    println!(
+        "│ Budgets   {} turns · {} recoveries",
+        state.max_turns, state.max_recoveries
+    );
+    println!("╰─ Starting");
+}
+
+pub fn log_completed(state: &PipelineState, output_count: usize) {
+    let output_label = if output_count == 1 {
+        "output"
+    } else {
+        "outputs"
+    };
+    println!("\n✓ Completed · {output_count} {output_label}");
+    log_budget_used(state);
+}
+
+pub fn log_budget_used(state: &PipelineState) {
+    println!(
+        "  Budget used · {}/{} turns · {}/{} recoveries",
+        state.turns_taken, state.max_turns, state.recoveries_taken, state.max_recoveries
+    );
+}
+
+pub fn one_line(value: &str) -> String {
+    value.replace('\r', "\\r").replace('\n', "\\n")
 }
 
 #[cfg(test)]
@@ -351,6 +337,20 @@ mod tests {
 
     fn pipeline_id() -> PipelineId {
         PipelineId::new("test-pipeline").expect("test pipeline ID should be valid")
+    }
+
+    /// Drives a gateless pipeline to its terminal status, mirroring how the attended
+    /// wrapper maps terminals to a Result vector.
+    fn advance_to_results<C: LlmClient>(
+        driver: &Driver<C>,
+        state: PipelineState,
+    ) -> Result<Vec<String>> {
+        match driver.advance(state)?.status {
+            DriveStatus::Done(results) => Ok(results),
+            DriveStatus::Stopped(_) => Ok(Vec::new()),
+            DriveStatus::Aborted => Ok(Vec::new()),
+            DriveStatus::WaitingAtGate => panic!("gateless pipeline paused at a gate"),
+        }
     }
 
     struct MockLlmClient {
@@ -435,40 +435,74 @@ mod tests {
             3,
         );
 
-        let results = driver.run(state).expect("run should succeed");
+        let results = advance_to_results(&driver, state).expect("run should succeed");
 
         assert_eq!(results, vec!["Parent Final"]);
     }
 
+    fn gate_then_worker_state() -> PipelineState {
+        PipelineState::new(
+            pipeline_id(),
+            "Approve the release".to_string(),
+            vec![
+                Aspect {
+                    id: "approval".to_string(),
+                    name: "Release Approval".to_string(),
+                    aspect_type: AspectType::Gate,
+                    prompt: String::new(),
+                    model: None,
+                },
+                Aspect {
+                    id: "ship".to_string(),
+                    name: "Ship".to_string(),
+                    aspect_type: AspectType::Worker,
+                    prompt: "Ship it".to_string(),
+                    model: None,
+                },
+            ],
+            std::num::NonZeroUsize::new(2).expect("turn limit should be non-zero"),
+            0,
+        )
+    }
+
     #[test]
-    fn test_drive_pauses_at_gate_without_reading_terminal_input() {
+    fn test_advance_pauses_at_gate_and_resume_controls_the_run() {
         let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
+        std::fs::write(temp_dir.path().join("aspect-worker.md"), "Mock template")
+            .expect("worker template should be written");
         let client = MockLlmClient {
-            responses: Mutex::new(Vec::new()),
+            responses: Mutex::new(vec!["DONE Shipped".to_string()]),
         };
         let driver = Driver::new(
             client,
             PromptTemplates::directory(temp_dir.path().to_path_buf()),
         );
-        let state = PipelineState::new(
-            pipeline_id(),
-            "Approve the release".to_string(),
-            vec![Aspect {
-                id: "approval".to_string(),
-                name: "Release Approval".to_string(),
-                aspect_type: AspectType::Gate,
-                prompt: String::new(),
-                model: None,
-            }],
-            std::num::NonZeroUsize::new(1).expect("turn limit should be non-zero"),
-            0,
-        );
 
-        let outcome = driver.drive(state).expect("drive should pause");
+        // (a) Advancing pauses at the gate without reading any terminal input.
+        let paused = driver
+            .advance(gate_then_worker_state())
+            .expect("advance should pause at the gate");
+        assert!(matches!(paused.status, DriveStatus::WaitingAtGate));
+        assert_eq!(paused.state.frame().current_index, 0);
+        assert_eq!(paused.state.current_aspect().id, "approval");
 
-        assert!(matches!(outcome.status, DriveStatus::WaitingAtGate));
-        assert_eq!(outcome.state.frame().current_index, 0);
-        assert_eq!(outcome.state.current_aspect().id, "approval");
+        // (b) Resuming with approval drives past the gate to the worker's terminal.
+        let approved = driver
+            .resume(paused.state, GateDecision::Continue)
+            .expect("resume should advance past the gate");
+        match approved.status {
+            DriveStatus::Done(results) => assert_eq!(results, vec!["Shipped"]),
+            other => panic!("approved resume should complete, got {other:?}"),
+        }
+
+        // (c) Resuming with abort ends the run without a Result.
+        let paused_again = driver
+            .advance(gate_then_worker_state())
+            .expect("advance should pause at the gate again");
+        let aborted = driver
+            .resume(paused_again.state, GateDecision::Abort)
+            .expect("abort should end the run");
+        assert!(matches!(aborted.status, DriveStatus::Aborted));
     }
 
     #[test]
@@ -519,7 +553,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(state).expect("run should succeed");
+        let results = advance_to_results(&driver, state).expect("run should succeed");
         assert_eq!(results, vec!["Lyra crossed the moonlit bridge."]);
 
         let prompts = driver
@@ -571,9 +605,7 @@ mod tests {
             3,
         );
 
-        let error = driver
-            .run(state)
-            .expect_err("loop should hit the turn limit");
+        let error = advance_to_results(&driver, state).expect_err("loop should hit the turn limit");
         assert!(error.to_string().contains("max_turns limit of 2"));
     }
 
@@ -609,9 +641,8 @@ mod tests {
             1,
         );
 
-        let results = driver
-            .run(state)
-            .expect("final Aspect fork should join cleanly");
+        let results =
+            advance_to_results(&driver, state).expect("final Aspect fork should join cleanly");
 
         assert!(results.is_empty());
     }
@@ -645,7 +676,7 @@ mod tests {
             1,
         );
 
-        let results = driver.run(state).expect("recovery should succeed");
+        let results = advance_to_results(&driver, state).expect("recovery should succeed");
         assert_eq!(results, vec!["Recovered result"]);
     }
 
@@ -679,7 +710,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(state).expect("run should succeed");
+        let results = advance_to_results(&driver, state).expect("run should succeed");
         assert_eq!(results, vec!["Final result"]);
 
         let prompts = driver
@@ -739,7 +770,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(state).expect("run should succeed");
+        let results = advance_to_results(&driver, state).expect("run should succeed");
         assert_eq!(results, vec!["Final result"]);
 
         let prompts = driver
@@ -782,7 +813,7 @@ mod tests {
             3,
         );
 
-        let results = driver.run(state).expect("stop should be clean");
+        let results = advance_to_results(&driver, state).expect("stop should be clean");
         assert!(results.is_empty());
     }
 
@@ -814,9 +845,8 @@ mod tests {
             0,
         );
 
-        let results = driver
-            .run(state)
-            .expect("child DONE should terminate the whole run");
+        let results =
+            advance_to_results(&driver, state).expect("child DONE should terminate the whole run");
         assert_eq!(results, vec!["Whole run complete"]);
     }
 
@@ -858,8 +888,7 @@ mod tests {
             3,
         );
 
-        let error = driver
-            .run(state)
+        let error = advance_to_results(&driver, state)
             .expect_err("DONE with unjoined fork work should fail");
         assert!(error.to_string().contains("use CONTINUE first"));
     }
