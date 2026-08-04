@@ -150,7 +150,7 @@ pub fn continue_run(config_file: Option<PathBuf>, selection: Selection) -> Resul
         bail!(
             "continue requires a run waiting at a gate; run {} is {}",
             short_id(&project, &snapshot)?,
-            snapshot.status.label()
+            snapshot.observable_status().label()
         );
     }
 
@@ -534,7 +534,7 @@ fn print_status(project: &ProjectPaths, snapshot: &RunSnapshot) -> Result<()> {
         snapshot.run_id
     );
     println!("Pipeline  {}", snapshot.pipeline_id().as_str());
-    println!("Status    {}", snapshot.status.label());
+    println!("Status    {}", snapshot.observable_status().label());
     println!("Request   {}", one_line(&snapshot.state.request));
     println!(
         "Budget    {}/{} turns · {}/{} recoveries",

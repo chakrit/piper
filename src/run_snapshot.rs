@@ -130,6 +130,18 @@ impl RunSnapshot {
         )
     }
 
+    /// The status an operator observes when opening this snapshot. A run persisted mid-call
+    /// — its latest turn still `calling` with no stored response — is surfaced as
+    /// `interrupted_call`, even though the status stored before the crash is `running`. The
+    /// stored bytes are never rewritten; the crash is derived on read, so a lock-free
+    /// `status` and a lock-holding lifecycle command report the same observable state.
+    pub fn observable_status(&self) -> RunStatus {
+        match self.has_interrupted_call() {
+            true => RunStatus::InterruptedCall,
+            false => self.status,
+        }
+    }
+
     /// Check internal consistency the spec demands. Full path and pointer-identity checks
     /// belong to the load slice, which compares the snapshot against the directory it came
     /// from; those are not performed here.

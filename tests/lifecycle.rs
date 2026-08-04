@@ -110,6 +110,10 @@ prompt="${1:-}"
 if [[ -n "${PIPER_TEST_LLM_LOG:-}" ]]; then
   printf '%s\n===CALL===\n' "$prompt" >> "$PIPER_TEST_LLM_LOG"
 fi
+if [[ -n "${PIPER_TEST_LLM_FAIL:-}" ]]; then
+  printf 'simulated model failure\n' >&2
+  exit 1
+fi
 if [[ "$prompt" == *"Current Aspect**: Prepare Release"* ]]; then
   printf 'CONTINUE\n'
 elif [[ "$prompt" == *"Current Aspect**: Midpoint"* ]]; then
@@ -375,6 +379,43 @@ fn resuming_does_not_reinvoke_the_model_for_an_applied_turn() {
             .count(),
         1,
         "continue must invoke the ship worker exactly once"
+    );
+}
+
+#[test]
+fn status_surfaces_an_interrupted_call_after_a_crash_mid_call() {
+    let env = Sandbox::new();
+
+    let start = env
+        .piper()
+        .env("PIPER_TEST_LLM_FAIL", "1")
+        .args(["--file", "piper.toml", "start"])
+        .arg(env.pipeline("gated.toml"))
+        .arg("Crash mid-call")
+        .output()
+        .expect("piper start should run");
+    assert!(
+        !start.status.success(),
+        "a failed model call must surface as an error, not a clean exit"
+    );
+
+    let run_id = env.only_run_id("gated");
+    assert_eq!(
+        env.snapshot("gated", &run_id)["status"],
+        "running",
+        "the crash persists the pre-call `running` status with a trailing `calling` turn"
+    );
+
+    let status = env
+        .piper()
+        .args(["--file", "piper.toml", "status", "gated"])
+        .output()
+        .expect("piper status should run");
+    assert_success(&status);
+    assert!(
+        stdout_of(&status).contains("interrupted_call"),
+        "status must surface a mid-call crash as interrupted_call, not the stale stored status:\n{}",
+        stdout_of(&status)
     );
 }
 
