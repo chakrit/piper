@@ -12,6 +12,9 @@ mod identifier;
 mod llm;
 mod models;
 mod prompt_templates;
+// Consumed by the durable-run storage and CLI slices that follow.
+#[allow(dead_code)]
+mod run_id;
 mod state;
 
 use actions::{AppContext, EnsureProject, ResolveProject, WriteConfig};
