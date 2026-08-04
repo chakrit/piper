@@ -1,23 +1,24 @@
 use crate::identifier::PipelineId;
 use crate::models::Aspect;
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CompletedFork {
     pub id: String,
     pub prompt: String,
     pub corpus: HashMap<String, String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum FrameScope {
     Root,
     Fork { id: String, prompt: String },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ExecutionFrame {
     pub scope: FrameScope,
     pub completed_forks: Vec<CompletedFork>,
@@ -50,7 +51,7 @@ impl ExecutionFrame {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineState {
     pub pipeline_id: PipelineId,
     pub request: String,
@@ -315,6 +316,60 @@ mod tests {
 
         assert_eq!(state.frames.len(), 1);
         let returned = &state.frame().completed_forks[0].corpus;
+        assert_eq!(returned.len(), 2);
+        assert_eq!(returned["market/buyers/research"], "Buyer evidence");
+        assert_eq!(returned["market/research"], "Market evidence");
+    }
+
+    #[test]
+    fn resumed_state_from_json_returns_and_joins_like_the_original() {
+        let mut state = PipelineState::new(
+            pipeline_id(),
+            "Request".to_string(),
+            vec![Aspect {
+                id: "research".to_string(),
+                name: "Research".to_string(),
+                aspect_type: AspectType::Worker,
+                prompt: "Find evidence".to_string(),
+                model: None,
+            }],
+            NonZeroUsize::new(8).expect("turn limit should be non-zero"),
+            2,
+        );
+        state
+            .push_fork("market".to_string(), "Study the market".to_string())
+            .expect("outer fork should start");
+        state
+            .push_fork("buyers".to_string(), "Study buyers".to_string())
+            .expect("nested fork should start");
+        state.frame_mut().corpus.insert(
+            "market/buyers/research".to_string(),
+            "Buyer evidence".to_string(),
+        );
+
+        let snapshot = serde_json::to_string(&state).expect("state should serialize to JSON");
+        let mut resumed: PipelineState =
+            serde_json::from_str(&snapshot).expect("snapshot should deserialize");
+
+        resumed
+            .validate()
+            .expect("resumed state must satisfy frame invariants");
+        assert_eq!(resumed.frames.len(), 3);
+
+        resumed
+            .return_current_fork()
+            .expect("nested fork should return after resume");
+        resumed.join_completed_forks();
+        resumed
+            .frame_mut()
+            .corpus
+            .insert("market/research".to_string(), "Market evidence".to_string());
+        resumed
+            .return_current_fork()
+            .expect("outer fork should return after resume");
+
+        assert_eq!(resumed.frames.len(), 1);
+        let returned = &resumed.frame().completed_forks[0].corpus;
         assert_eq!(returned.len(), 2);
         assert_eq!(returned["market/buyers/research"], "Buyer evidence");
         assert_eq!(returned["market/research"], "Market evidence");
