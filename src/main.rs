@@ -5,6 +5,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 mod actions;
+mod checkpointer;
 mod config;
 mod driver;
 mod dsl;
@@ -12,18 +13,19 @@ mod identifier;
 mod llm;
 mod models;
 mod prompt_templates;
-// Consumed by the durable-run storage and CLI slices that follow.
+// `RunId` is consumed here and by the checkpointer; prefix resolution awaits the CLI slice.
 #[allow(dead_code)]
 mod run_id;
-// Consumed by the durable-run persistence and resume slices that follow.
-#[allow(dead_code)]
 mod run_snapshot;
 mod state;
 
 use actions::{AppContext, EnsureProject, ResolveProject, WriteConfig};
+use checkpointer::{Checkpointer, NoopCheckpointer};
 use dialoguer::Select;
-use driver::{DriveStatus, Driver, GateDecision};
+use driver::{Driver, GateDecision};
 use llm::LlmClient;
+use run_id::RunId;
+use run_snapshot::{CURRENT_SCHEMA_VERSION, RunSnapshot, RunStatus, TerminalOutcome};
 use state::PipelineState;
 
 use driver::{log_budget_used, log_completed, log_run_started, one_line};
@@ -105,6 +107,8 @@ fn main() -> Result<()> {
                 cwd,
             }
             .run(&ctx)?;
+            let project_root = project.root.clone();
+            let config_path = project.config.clone();
             EnsureProject {
                 directory: project.state_dir,
                 canonical_root: project.root,
@@ -112,7 +116,7 @@ fn main() -> Result<()> {
             }
             .run(&ctx)?;
             let config = config::Config::load(&ctx, project.config)?;
-            let pipeline = config.load_pipeline(&ctx, pipeline_file)?;
+            let pipeline = config.load_pipeline(&ctx, pipeline_file.clone())?;
             let pipeline = config.resolve_pipeline(&ctx, &pipeline)?;
 
             let state = PipelineState::new(
@@ -127,13 +131,29 @@ fn main() -> Result<()> {
                 system_prompt: config.llm.system_prompt,
                 default_model: config.llm.default_model,
             };
+            let prompt_path = prompts.clone().unwrap_or_else(|| project_root.clone());
             let prompt_templates = match prompts {
                 Some(directory) => prompt_templates::PromptTemplates::directory(directory),
                 None => prompt_templates::PromptTemplates::embedded(),
             };
 
-            let driver = Driver::new(client, prompt_templates);
-            run_attended(&driver, state)?;
+            let snapshot = RunSnapshot {
+                schema_version: CURRENT_SCHEMA_VERSION,
+                run_id: RunId::generate(),
+                project_root,
+                config_path,
+                pipeline_path: pipeline_file,
+                prompt_path,
+                state,
+                turns: Vec::new(),
+                status: RunStatus::Ready,
+                terminal: None,
+            };
+
+            // The attended wrapper drops checkpoints this slice; the CLI-lifecycle slice
+            // resolves the run identity and swaps in the disk-backed sink.
+            let driver = Driver::new(client, prompt_templates, NoopCheckpointer);
+            run_attended(&driver, snapshot)?;
         }
     }
 
@@ -143,15 +163,18 @@ fn main() -> Result<()> {
 /// Attended wrapper over the headless engine: drives to each pause, presents any gate
 /// in the terminal, and applies the operator's Continue or Abort. Cancelling the prompt
 /// leaves the run waiting at that gate.
-fn run_attended<C: LlmClient>(driver: &Driver<C>, state: PipelineState) -> Result<()> {
-    log_run_started(&state);
+fn run_attended<C: LlmClient, K: Checkpointer>(
+    driver: &Driver<C, K>,
+    snapshot: RunSnapshot,
+) -> Result<()> {
+    log_run_started(&snapshot.state);
 
-    let mut outcome = driver.advance(state)?;
+    let mut snapshot = driver.advance(snapshot)?;
     loop {
-        match outcome.status {
-            DriveStatus::WaitingAtGate => {
-                let gate_id = outcome.state.current_aspect().id.clone();
-                let Some(decision) = prompt_gate(&outcome.state)? else {
+        match snapshot.status {
+            RunStatus::WaitingAtGate => {
+                let gate_id = snapshot.state.current_aspect().id.clone();
+                let Some(decision) = prompt_gate(&snapshot.state)? else {
                     println!("╰─ Cancelled · run left waiting at gate {gate_id}");
                     return Ok(());
                 };
@@ -161,22 +184,29 @@ fn run_attended<C: LlmClient>(driver: &Driver<C>, state: PipelineState) -> Resul
                     }
                     GateDecision::Abort => println!("■ Gate aborted · ending run at {gate_id}"),
                 }
-                outcome = driver.resume(outcome.state, decision)?;
+                snapshot = driver.resume(snapshot, decision)?;
             }
-            DriveStatus::Done(results) => {
-                log_completed(&outcome.state, results.len());
+            RunStatus::Done => {
+                let results = match &snapshot.terminal {
+                    Some(TerminalOutcome::Done { result }) => result.clone(),
+                    _ => Vec::new(),
+                };
+                log_completed(&snapshot.state, results.len());
                 print_final_outputs(&results);
                 return Ok(());
             }
-            DriveStatus::Stopped(reason) => {
-                println!("\n■ Stopped · {}", one_line(&reason));
-                log_budget_used(&outcome.state);
+            RunStatus::Stopped => {
+                if let Some(TerminalOutcome::Stopped { reason }) = &snapshot.terminal {
+                    println!("\n■ Stopped · {}", one_line(reason));
+                }
+                log_budget_used(&snapshot.state);
                 return Ok(());
             }
-            DriveStatus::Aborted => {
-                log_budget_used(&outcome.state);
+            RunStatus::Aborted => {
+                log_budget_used(&snapshot.state);
                 return Ok(());
             }
+            other => anyhow::bail!("run reached an unexpected status: {}", other.label()),
         }
     }
 }

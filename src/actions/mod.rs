@@ -5,7 +5,8 @@ pub mod read_aspect_file;
 pub mod read_config;
 pub mod read_prompt_template;
 pub mod resolve_project;
-// Consumed by the driver-checkpoint and CLI-lifecycle slices that follow.
+// `SaveRunSnapshot` is consumed by the disk checkpointer; the pointer and load units
+// await the CLI-lifecycle slice.
 #[allow(dead_code)]
 pub mod run_storage;
 pub mod state_storage;

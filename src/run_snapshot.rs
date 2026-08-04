@@ -120,6 +120,16 @@ impl RunSnapshot {
         &self.state.pipeline_id
     }
 
+    /// A run whose latest recorded call was persisted as `calling` with no stored response
+    /// crashed mid-call. Resuming such a snapshot must surface `interrupted_call` and never
+    /// silently repeat the possibly-completed external call.
+    pub fn has_interrupted_call(&self) -> bool {
+        matches!(
+            self.turns.last().map(|turn| &turn.phase),
+            Some(CallPhase::Calling)
+        )
+    }
+
     /// Check internal consistency the spec demands. Full path and pointer-identity checks
     /// belong to the load slice, which compares the snapshot against the directory it came
     /// from; those are not performed here.

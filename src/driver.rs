@@ -1,21 +1,18 @@
+use crate::checkpointer::Checkpointer;
 use crate::dsl::AspectAction;
 use crate::llm::LlmClient;
-use crate::models::AspectType;
+use crate::models::{Aspect, AspectType};
 use crate::prompt_templates::PromptTemplates;
+use crate::run_snapshot::{
+    CallPhase, RunSnapshot, RunStatus, TerminalOutcome, TurnKind, TurnRecord,
+};
 use crate::state::PipelineState;
 use anyhow::{Context, Result};
 
-pub struct Driver<C: LlmClient> {
+pub struct Driver<C: LlmClient, K: Checkpointer> {
     client: C,
     prompt_templates: PromptTemplates,
-}
-
-#[derive(Debug)]
-pub enum DriveStatus {
-    WaitingAtGate,
-    Done(Vec<String>),
-    Stopped(String),
-    Aborted,
+    checkpointer: K,
 }
 
 /// Operator's decision at a gate, supplied to `resume`. The engine never reads it
@@ -26,17 +23,292 @@ pub enum GateDecision {
     Abort,
 }
 
-pub struct DriveOutcome {
-    pub state: PipelineState,
-    pub status: DriveStatus,
+/// Whether an accepted action left the run mid-flight or drove it to a terminal.
+enum StepOutcome {
+    Continued,
+    Terminal(TerminalOutcome),
 }
 
-impl<C: LlmClient> Driver<C> {
-    pub fn new(client: C, prompt_templates: PromptTemplates) -> Self {
+/// What opening a snapshot demands before any new model call: either resume normally, or
+/// halt on a crash captured in the trailing turn.
+enum Recovery {
+    Fresh,
+    Halt,
+}
+
+impl<C: LlmClient, K: Checkpointer> Driver<C, K> {
+    pub fn new(client: C, prompt_templates: PromptTemplates, checkpointer: K) -> Self {
         Self {
             client,
             prompt_templates,
+            checkpointer,
         }
+    }
+
+    /// Drive a snapshot forward from a fresh start or after a crash. A trailing `Calling`
+    /// turn surfaces `interrupted_call` and stops; a trailing un-applied `Received` is
+    /// applied without repeating the model call, per the crash-recovery spec.
+    pub fn advance(&self, mut snapshot: RunSnapshot) -> Result<RunSnapshot> {
+        snapshot.validate()?;
+
+        match self.recover_pending(&mut snapshot)? {
+            Recovery::Halt => Ok(snapshot),
+            Recovery::Fresh => {
+                snapshot.status = RunStatus::Running;
+                self.drive(snapshot)
+            }
+        }
+    }
+
+    /// Resume a run paused at a gate, applying the operator's decision and checkpointing it.
+    /// `Continue` steps past the gate and drives on; `Abort` ends the run without a Result.
+    /// Approval is an explicit input, never a terminal read.
+    pub fn resume(&self, mut snapshot: RunSnapshot, decision: GateDecision) -> Result<RunSnapshot> {
+        anyhow::ensure!(
+            matches!(
+                snapshot.state.current_aspect().aspect_type,
+                AspectType::Gate
+            ),
+            "resume requires the run to be waiting at a gate"
+        );
+
+        match decision {
+            GateDecision::Continue => {
+                snapshot.state.frame_mut().current_index += 1;
+                snapshot.status = RunStatus::Running;
+                self.checkpointer.checkpoint(&snapshot)?;
+                self.drive(snapshot)
+            }
+            GateDecision::Abort => {
+                Self::set_terminal(&mut snapshot, TerminalOutcome::Aborted);
+                self.checkpointer.checkpoint(&snapshot)?;
+                Ok(snapshot)
+            }
+        }
+    }
+
+    fn recover_pending(&self, snapshot: &mut RunSnapshot) -> Result<Recovery> {
+        if snapshot.has_interrupted_call() {
+            snapshot.status = RunStatus::InterruptedCall;
+            self.checkpointer.checkpoint(snapshot)?;
+            return Ok(Recovery::Halt);
+        }
+
+        let Some(pending) = snapshot.turns.last() else {
+            return Ok(Recovery::Fresh);
+        };
+
+        match &pending.phase {
+            CallPhase::Calling | CallPhase::Applied { .. } => Ok(Recovery::Fresh),
+            CallPhase::Received { raw_output } => {
+                let raw = raw_output.clone();
+                let model = snapshot.state.current_aspect().model.clone();
+                snapshot.status = RunStatus::Running;
+                self.apply_response(snapshot, raw, model.as_deref())?;
+                match snapshot.status.is_terminal() {
+                    true => Ok(Recovery::Halt),
+                    false => Ok(Recovery::Fresh),
+                }
+            }
+        }
+    }
+
+    fn drive(&self, mut snapshot: RunSnapshot) -> Result<RunSnapshot> {
+        loop {
+            if snapshot.state.frame().current_index >= snapshot.state.aspects.len() {
+                if snapshot.state.is_root() {
+                    Self::set_terminal(&mut snapshot, TerminalOutcome::Done { result: Vec::new() });
+                    self.checkpointer.checkpoint(&snapshot)?;
+                    return Ok(snapshot);
+                }
+                Self::ensure_no_unjoined_forks(&snapshot.state, "return")?;
+                snapshot.state.return_current_fork()?;
+                continue;
+            }
+
+            let aspect = snapshot.state.current_aspect().clone();
+            match aspect.aspect_type {
+                AspectType::Gate => {
+                    Self::log_aspect_started(&snapshot.state, "Gate");
+                    println!("│ Aspect    {} · gate", aspect.id);
+                    snapshot.status = RunStatus::WaitingAtGate;
+                    self.checkpointer.checkpoint(&snapshot)?;
+                    return Ok(snapshot);
+                }
+                AspectType::Worker => {
+                    self.worker_turn(&mut snapshot, &aspect)?;
+                    if snapshot.status.is_terminal() {
+                        return Ok(snapshot);
+                    }
+                }
+            }
+        }
+    }
+
+    /// One Worker call: consume a turn, checkpoint `Calling`, call the model, checkpoint the
+    /// exact raw output as `Received`, then parse and apply it.
+    fn worker_turn(&self, snapshot: &mut RunSnapshot, aspect: &Aspect) -> Result<()> {
+        snapshot.state.consume_turn()?;
+        Self::log_worker_started(
+            &snapshot.state,
+            aspect,
+            self.client.resolve_model(aspect.model.as_deref()),
+        );
+
+        let prompt = self.render_worker_prompt(&snapshot.state, aspect)?;
+        snapshot.turns.push(TurnRecord {
+            kind: TurnKind::Worker,
+            prompt: prompt.clone(),
+            phase: CallPhase::Calling,
+        });
+        self.checkpointer.checkpoint(snapshot)?;
+
+        println!("│ LLM       requesting action");
+        let raw = self.client.call(&prompt, aspect.model.as_deref())?;
+        Self::mark_received(snapshot, raw.clone());
+        self.checkpointer.checkpoint(snapshot)?;
+
+        self.apply_response(snapshot, raw, aspect.model.as_deref())
+    }
+
+    /// Parse a stored raw response and apply the accepted transition, recovering a malformed
+    /// response first. Marks the turn `Applied`, updates the run status, and checkpoints.
+    fn apply_response(
+        &self,
+        snapshot: &mut RunSnapshot,
+        raw: String,
+        model: Option<&str>,
+    ) -> Result<()> {
+        let (raw, action) = self.parse_or_recover(snapshot, raw, model)?;
+
+        Self::mark_applied(snapshot, raw, action.clone());
+        match Self::apply_action(&mut snapshot.state, action)? {
+            StepOutcome::Continued => {}
+            StepOutcome::Terminal(outcome) => Self::set_terminal(snapshot, outcome),
+        }
+        self.checkpointer.checkpoint(snapshot)?;
+        Ok(())
+    }
+
+    /// Turn a raw response into an accepted action. A malformed response spends a recovery,
+    /// records a `FormatterRecovery` turn through its own `Calling`/`Received` phases, and
+    /// leaves that recovery turn as the one to be applied.
+    fn parse_or_recover(
+        &self,
+        snapshot: &mut RunSnapshot,
+        raw: String,
+        model: Option<&str>,
+    ) -> Result<(String, AspectAction)> {
+        let error = match AspectAction::parse(&raw) {
+            Ok(action) => {
+                Self::log_action("Action", &action);
+                return Ok((raw, action));
+            }
+            Err(error) => error,
+        };
+
+        snapshot.state.consume_recovery()?;
+        println!(
+            "│ Recovery  {}/{} · {}",
+            snapshot.state.recoveries_taken, snapshot.state.max_recoveries, error
+        );
+        println!("│ Rejected  {}", one_line(&raw));
+
+        let template = self.prompt_templates.recover(&crate::actions::AppContext)?;
+        let recover_prompt = format!("{template}\n\nBad Response:\n{raw}");
+        snapshot.turns.push(TurnRecord {
+            kind: TurnKind::FormatterRecovery,
+            prompt: recover_prompt.clone(),
+            phase: CallPhase::Calling,
+        });
+        self.checkpointer.checkpoint(snapshot)?;
+
+        println!("│ LLM       requesting formatter recovery");
+        let recovered = self.client.call(&recover_prompt, model)?;
+        Self::mark_received(snapshot, recovered.clone());
+        self.checkpointer.checkpoint(snapshot)?;
+
+        let action = AspectAction::parse(&recovered).with_context(|| {
+            format!(
+                "Recovery response was not valid Piper DSL: {}",
+                one_line(&recovered)
+            )
+        })?;
+        Self::log_action("Recovered", &action);
+        Ok((recovered, action))
+    }
+
+    fn apply_action(state: &mut PipelineState, action: AspectAction) -> Result<StepOutcome> {
+        match action {
+            AspectAction::Set(value) => {
+                let key = state.contribution_key();
+                state.frame_mut().corpus.insert(key, value);
+                println!(
+                    "╰─ Saved contribution · {} corpus entries",
+                    state.frame().corpus.len()
+                );
+                Ok(StepOutcome::Continued)
+            }
+            AspectAction::Continue => {
+                let joined_forks = state.frame().completed_forks.len();
+                let returning_fork = state.frame().fork_id().map(str::to_string);
+                state.join_completed_forks();
+                if state.is_root() {
+                    state.frame_mut().current_index += 1;
+                    println!(
+                        "╰─ Advanced · joined {joined_forks} forks · {} corpus entries",
+                        state.frame().corpus.len()
+                    );
+                } else {
+                    state.return_current_fork()?;
+                    println!(
+                        "╰─ Returned fork {} · joined {joined_forks} descendant forks",
+                        returning_fork.expect("non-root frame has a fork ID")
+                    );
+                }
+                Ok(StepOutcome::Continued)
+            }
+            AspectAction::Fork { id, prompt } => {
+                let fork_id = id.clone();
+                state.push_fork(id, prompt)?;
+                println!(
+                    "╰─ Entered fork {fork_id} · depth {}",
+                    state.frames.len() - 1
+                );
+                Ok(StepOutcome::Continued)
+            }
+            AspectAction::Jump(id) => {
+                Self::ensure_no_unjoined_forks(state, "JUMP")?;
+                state.jump_to_id(&id)?;
+                println!("╰─ Jumped to Aspect {id}");
+                Ok(StepOutcome::Continued)
+            }
+            AspectAction::Stop(reason) => {
+                Self::ensure_no_unjoined_forks(state, "STOP")?;
+                println!("╰─ Stop accepted");
+                Ok(StepOutcome::Terminal(TerminalOutcome::Stopped { reason }))
+            }
+            AspectAction::Done(result) => {
+                Self::ensure_no_unjoined_forks(state, "DONE")?;
+                println!("╰─ Completion accepted");
+                Ok(StepOutcome::Terminal(TerminalOutcome::Done {
+                    result: vec![result],
+                }))
+            }
+        }
+    }
+
+    fn render_worker_prompt(&self, state: &PipelineState, aspect: &Aspect) -> Result<String> {
+        let template = self.prompt_templates.worker(&crate::actions::AppContext)?;
+        let context = Self::format_aspect_context(state);
+
+        Ok(template
+            .replace("{{aspect_name}}", &aspect.name)
+            .replace("{{aspect_prompt}}", &aspect.prompt)
+            .replace("{{aspect_id}}", &aspect.id)
+            .replace("{{request}}", &state.request)
+            .replace("{{fork_prompt}}", state.frame().fork_prompt().unwrap_or(""))
+            .replace("{{context}}", &context))
     }
 
     fn format_aspect_context(state: &PipelineState) -> String {
@@ -79,190 +351,33 @@ impl<C: LlmClient> Driver<C> {
             .join("\n")
     }
 
-    /// Resume a run paused at a gate, applying the operator's decision. `Continue`
-    /// steps past the gate and drives to the next pause or terminal status; `Abort`
-    /// ends the run without a Result. Approval is an explicit input, never a terminal
-    /// read.
-    pub fn resume(&self, mut state: PipelineState, decision: GateDecision) -> Result<DriveOutcome> {
-        anyhow::ensure!(
-            matches!(state.current_aspect().aspect_type, AspectType::Gate),
-            "resume requires the run to be waiting at a gate"
-        );
-
-        match decision {
-            GateDecision::Continue => {
-                state.frame_mut().current_index += 1;
-                self.advance(state)
-            }
-            GateDecision::Abort => Ok(DriveOutcome {
-                state,
-                status: DriveStatus::Aborted,
-            }),
-        }
+    fn set_terminal(snapshot: &mut RunSnapshot, outcome: TerminalOutcome) {
+        snapshot.status = match &outcome {
+            TerminalOutcome::Done { .. } => RunStatus::Done,
+            TerminalOutcome::Stopped { .. } => RunStatus::Stopped,
+            TerminalOutcome::Aborted => RunStatus::Aborted,
+            TerminalOutcome::Failed { .. } => RunStatus::Failed,
+        };
+        snapshot.terminal = Some(outcome);
     }
 
-    pub fn advance(&self, mut state: PipelineState) -> Result<DriveOutcome> {
-        state.validate()?;
+    fn mark_received(snapshot: &mut RunSnapshot, raw: String) {
+        let turn = snapshot
+            .turns
+            .last_mut()
+            .expect("a call turn was recorded before its output");
+        turn.phase = CallPhase::Received { raw_output: raw };
+    }
 
-        loop {
-            if state.frame().current_index >= state.aspects.len() {
-                if state.is_root() {
-                    return Ok(DriveOutcome {
-                        state,
-                        status: DriveStatus::Done(Vec::new()),
-                    });
-                }
-                Self::ensure_no_unjoined_forks(&state, "return")?;
-                state.return_current_fork()?;
-                continue;
-            }
-            let aspect = state.current_aspect().clone();
-
-            match aspect.aspect_type {
-                AspectType::Gate => {
-                    Self::log_aspect_started(&state, "Gate");
-                    println!("│ Aspect    {} · gate", aspect.id);
-
-                    return Ok(DriveOutcome {
-                        state,
-                        status: DriveStatus::WaitingAtGate,
-                    });
-                }
-                AspectType::Worker => {
-                    state.consume_turn()?;
-                    Self::log_aspect_started(&state, "Worker");
-                    println!("│ Aspect    {} · worker", aspect.id);
-                    println!(
-                        "│ Context   {} · {}",
-                        state.context_path(),
-                        state
-                            .frame()
-                            .fork_id()
-                            .map(|id| format!("fork {id}"))
-                            .unwrap_or_else(|| "root".to_string())
-                    );
-                    println!(
-                        "│ Budget    turn {}/{} · recovery {}/{}",
-                        state.turns_taken,
-                        state.max_turns,
-                        state.recoveries_taken,
-                        state.max_recoveries
-                    );
-                    println!(
-                        "│ State     {} corpus entries · {} pending forks",
-                        state.frame().corpus.len(),
-                        state.frame().completed_forks.len()
-                    );
-                    println!(
-                        "│ Model     {}",
-                        self.client.resolve_model(aspect.model.as_deref())
-                    );
-
-                    let template = self.prompt_templates.worker(&crate::actions::AppContext)?;
-
-                    let context = Self::format_aspect_context(&state);
-
-                    let prompt = template
-                        .replace("{{aspect_name}}", &aspect.name)
-                        .replace("{{aspect_prompt}}", &aspect.prompt)
-                        .replace("{{aspect_id}}", &aspect.id)
-                        .replace("{{request}}", &state.request)
-                        .replace("{{fork_prompt}}", state.frame().fork_prompt().unwrap_or(""))
-                        .replace("{{context}}", &context);
-
-                    println!("│ LLM       requesting action");
-                    let raw_response = self.client.call(&prompt, aspect.model.as_deref())?;
-
-                    let action = match AspectAction::parse(&raw_response) {
-                        Ok(action) => {
-                            Self::log_action("Action", &action);
-                            action
-                        }
-                        Err(error) => {
-                            state.consume_recovery()?;
-                            println!(
-                                "│ Recovery  {}/{} · {}",
-                                state.recoveries_taken, state.max_recoveries, error
-                            );
-                            println!("│ Rejected  {}", one_line(&raw_response));
-                            let recover_template =
-                                self.prompt_templates.recover(&crate::actions::AppContext)?;
-
-                            let recover_prompt =
-                                format!("{}\n\nBad Response:\n{}", recover_template, raw_response);
-                            println!("│ LLM       requesting formatter recovery");
-                            let recovered_raw =
-                                self.client.call(&recover_prompt, aspect.model.as_deref())?;
-                            let recovered =
-                                AspectAction::parse(&recovered_raw).with_context(|| {
-                                    format!(
-                                        "Recovery response was not valid Piper DSL: {}",
-                                        one_line(&recovered_raw)
-                                    )
-                                })?;
-                            Self::log_action("Recovered", &recovered);
-                            recovered
-                        }
-                    };
-
-                    let mut terminal = None;
-                    match action {
-                        AspectAction::Set(value) => {
-                            let key = state.contribution_key();
-                            state.frame_mut().corpus.insert(key, value);
-                            println!(
-                                "╰─ Saved contribution · {} corpus entries",
-                                state.frame().corpus.len()
-                            );
-                        }
-                        AspectAction::Continue => {
-                            let joined_forks = state.frame().completed_forks.len();
-                            let returning_fork = state.frame().fork_id().map(str::to_string);
-                            state.join_completed_forks();
-                            if state.is_root() {
-                                state.frame_mut().current_index += 1;
-                                println!(
-                                    "╰─ Advanced · joined {joined_forks} forks · {} corpus entries",
-                                    state.frame().corpus.len()
-                                );
-                            } else {
-                                state.return_current_fork()?;
-                                println!(
-                                    "╰─ Returned fork {} · joined {joined_forks} descendant forks",
-                                    returning_fork.expect("non-root frame has a fork ID")
-                                );
-                            }
-                        }
-                        AspectAction::Fork { id, prompt } => {
-                            let fork_id = id.clone();
-                            state.push_fork(id, prompt)?;
-                            println!(
-                                "╰─ Entered fork {fork_id} · depth {}",
-                                state.frames.len() - 1
-                            );
-                        }
-                        AspectAction::Jump(id) => {
-                            Self::ensure_no_unjoined_forks(&state, "JUMP")?;
-                            state.jump_to_id(&id)?;
-                            println!("╰─ Jumped to Aspect {id}");
-                        }
-                        AspectAction::Stop(reason) => {
-                            Self::ensure_no_unjoined_forks(&state, "STOP")?;
-                            println!("╰─ Stop accepted");
-                            terminal = Some(DriveStatus::Stopped(reason));
-                        }
-                        AspectAction::Done(result) => {
-                            Self::ensure_no_unjoined_forks(&state, "DONE")?;
-                            println!("╰─ Completion accepted");
-                            terminal = Some(DriveStatus::Done(vec![result]));
-                        }
-                    }
-                    if let Some(status) = terminal {
-                        return Ok(DriveOutcome { state, status });
-                    }
-                }
-            }
-        }
+    fn mark_applied(snapshot: &mut RunSnapshot, raw: String, action: AspectAction) {
+        let turn = snapshot
+            .turns
+            .last_mut()
+            .expect("a call turn was recorded before it is applied");
+        turn.phase = CallPhase::Applied {
+            raw_output: raw,
+            action,
+        };
     }
 
     fn log_aspect_started(state: &PipelineState, kind: &str) {
@@ -274,13 +389,35 @@ impl<C: LlmClient> Driver<C> {
         );
     }
 
+    fn log_worker_started(state: &PipelineState, aspect: &Aspect, model: &str) {
+        Self::log_aspect_started(state, "Worker");
+        println!("│ Aspect    {} · worker", aspect.id);
+        println!(
+            "│ Context   {} · {}",
+            state.context_path(),
+            state
+                .frame()
+                .fork_id()
+                .map(|id| format!("fork {id}"))
+                .unwrap_or_else(|| "root".to_string())
+        );
+        println!(
+            "│ Budget    turn {}/{} · recovery {}/{}",
+            state.turns_taken, state.max_turns, state.recoveries_taken, state.max_recoveries
+        );
+        println!(
+            "│ State     {} corpus entries · {} pending forks",
+            state.frame().corpus.len(),
+            state.frame().completed_forks.len()
+        );
+        println!("│ Model     {model}");
+    }
+
     fn log_action(label: &str, action: &AspectAction) {
         match action {
             AspectAction::Set(value) => println!("│ {label:<10}SET · {value}"),
             AspectAction::Continue => println!("│ {label:<10}CONTINUE"),
-            AspectAction::Fork { id, prompt } => {
-                println!("│ {label:<10}FORK {id} · {prompt}");
-            }
+            AspectAction::Fork { id, prompt } => println!("│ {label:<10}FORK {id} · {prompt}"),
             AspectAction::Jump(id) => println!("│ {label:<10}JUMP · {id}"),
             AspectAction::Stop(reason) => println!("│ {label:<10}STOP · {reason}"),
             AspectAction::Done(result) => println!("│ {label:<10}DONE · {result}"),
@@ -331,25 +468,69 @@ pub fn one_line(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checkpointer::NoopCheckpointer;
     use crate::identifier::PipelineId;
     use crate::models::{Aspect, AspectType};
+    use crate::run_id::RunId;
+    use crate::run_snapshot::{
+        CURRENT_SCHEMA_VERSION, CallPhase, RunStatus, TerminalOutcome, TurnKind, TurnRecord,
+    };
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
     fn pipeline_id() -> PipelineId {
         PipelineId::new("test-pipeline").expect("test pipeline ID should be valid")
     }
 
-    /// Drives a gateless pipeline to its terminal status, mirroring how the attended
-    /// wrapper maps terminals to a Result vector.
-    fn advance_to_results<C: LlmClient>(
-        driver: &Driver<C>,
-        state: PipelineState,
-    ) -> Result<Vec<String>> {
-        match driver.advance(state)?.status {
-            DriveStatus::Done(results) => Ok(results),
-            DriveStatus::Stopped(_) => Ok(Vec::new()),
-            DriveStatus::Aborted => Ok(Vec::new()),
-            DriveStatus::WaitingAtGate => panic!("gateless pipeline paused at a gate"),
+    fn snapshot_of(state: PipelineState) -> RunSnapshot {
+        RunSnapshot {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            run_id: RunId::generate(),
+            project_root: PathBuf::from("/project"),
+            config_path: PathBuf::from("/project/piper.toml"),
+            pipeline_path: PathBuf::from("/project/pipeline.toml"),
+            prompt_path: PathBuf::from("/project/prompts"),
+            state,
+            turns: Vec::new(),
+            status: RunStatus::Ready,
+            terminal: None,
+        }
+    }
+
+    /// A checkpoint reduced to what the spec makes observable: the run status and the phase
+    /// of its latest recorded call. Tests assert the exact sequence of these.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Phase {
+        None,
+        Calling(TurnKind),
+        Received(TurnKind),
+        Applied(TurnKind),
+    }
+
+    fn mark(snapshot: &RunSnapshot) -> (RunStatus, Phase) {
+        let phase = match snapshot.turns.last() {
+            None => Phase::None,
+            Some(turn) => match turn.phase {
+                CallPhase::Calling => Phase::Calling(turn.kind),
+                CallPhase::Received { .. } => Phase::Received(turn.kind),
+                CallPhase::Applied { .. } => Phase::Applied(turn.kind),
+            },
+        };
+        (snapshot.status, phase)
+    }
+
+    #[derive(Default)]
+    struct RecordingCheckpointer {
+        marks: Mutex<Vec<(RunStatus, Phase)>>,
+    }
+
+    impl Checkpointer for RecordingCheckpointer {
+        fn checkpoint(&self, snapshot: &RunSnapshot) -> Result<()> {
+            self.marks
+                .lock()
+                .expect("checkpoint marks lock should not be poisoned")
+                .push(mark(snapshot));
+            Ok(())
         }
     }
 
@@ -389,12 +570,215 @@ mod tests {
         }
     }
 
+    /// Fails the test if the model is ever called. Proves resume applies a stored response
+    /// without repeating the external call.
+    struct PanickingLlmClient;
+
+    impl LlmClient for PanickingLlmClient {
+        fn call(&self, _prompt: &str, _model: Option<&str>) -> Result<String> {
+            panic!("the model must not be called when a stored response is being applied");
+        }
+    }
+
+    /// Drives a gateless pipeline to its terminal status, mirroring how the attended
+    /// wrapper maps terminals to a Result vector.
+    fn advance_to_results<C: LlmClient, K: Checkpointer>(
+        driver: &Driver<C, K>,
+        state: PipelineState,
+    ) -> Result<Vec<String>> {
+        let final_snapshot = driver.advance(snapshot_of(state))?;
+        match final_snapshot.terminal {
+            Some(TerminalOutcome::Done { result }) => Ok(result),
+            Some(TerminalOutcome::Stopped { .. }) | Some(TerminalOutcome::Aborted) => {
+                Ok(Vec::new())
+            }
+            Some(TerminalOutcome::Failed { error }) => Err(anyhow::anyhow!(error)),
+            None => match final_snapshot.status {
+                RunStatus::WaitingAtGate => panic!("gateless pipeline paused at a gate"),
+                other => panic!("run ended without a terminal outcome: {}", other.label()),
+            },
+        }
+    }
+
+    fn worker(id: &str) -> Aspect {
+        Aspect {
+            id: id.to_string(),
+            name: id.to_string(),
+            aspect_type: AspectType::Worker,
+            prompt: "Prompt".to_string(),
+            model: None,
+        }
+    }
+
+    fn gate(id: &str) -> Aspect {
+        Aspect {
+            id: id.to_string(),
+            name: id.to_string(),
+            aspect_type: AspectType::Gate,
+            prompt: String::new(),
+            model: None,
+        }
+    }
+
+    fn templates_dir(name: &str) -> PromptTemplates {
+        let dir = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(&dir).expect("template directory should be created");
+        std::fs::write(dir.join("aspect-worker.md"), "Prompt: {{aspect_prompt}}")
+            .expect("worker template should be written");
+        std::fs::write(dir.join("aspect-recover.md"), "Recovery template")
+            .expect("recovery template should be written");
+        PromptTemplates::directory(dir)
+    }
+
+    #[test]
+    fn checkpoints_each_call_phase_the_gate_decision_and_the_terminal() {
+        let client = MockLlmClient {
+            responses: Mutex::new(vec!["CONTINUE".to_string(), "DONE result".to_string()]),
+        };
+        let driver = Driver::new(
+            client,
+            templates_dir("piper_ckpt_sequence"),
+            RecordingCheckpointer::default(),
+        );
+        let state = PipelineState::new(
+            pipeline_id(),
+            "Request".to_string(),
+            vec![worker("w1"), gate("g"), worker("w2")],
+            std::num::NonZeroUsize::new(4).expect("turn limit is non-zero"),
+            0,
+        );
+
+        let paused = driver
+            .advance(snapshot_of(state))
+            .expect("advance should pause at the gate");
+        assert_eq!(paused.status, RunStatus::WaitingAtGate);
+
+        let finished = driver
+            .resume(paused, GateDecision::Continue)
+            .expect("resume should complete the run");
+        assert_eq!(finished.status, RunStatus::Done);
+        assert_eq!(
+            finished.terminal,
+            Some(TerminalOutcome::Done {
+                result: vec!["result".to_string()],
+            })
+        );
+
+        let marks = driver
+            .checkpointer
+            .marks
+            .lock()
+            .expect("marks lock should not be poisoned");
+        assert_eq!(
+            marks.as_slice(),
+            [
+                (RunStatus::Running, Phase::Calling(TurnKind::Worker)),
+                (RunStatus::Running, Phase::Received(TurnKind::Worker)),
+                (RunStatus::Running, Phase::Applied(TurnKind::Worker)),
+                (RunStatus::WaitingAtGate, Phase::Applied(TurnKind::Worker)),
+                (RunStatus::Running, Phase::Applied(TurnKind::Worker)),
+                (RunStatus::Running, Phase::Calling(TurnKind::Worker)),
+                (RunStatus::Running, Phase::Received(TurnKind::Worker)),
+                (RunStatus::Done, Phase::Applied(TurnKind::Worker)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_trailing_calling_turn_is_an_interrupted_call() {
+        let mut snapshot = snapshot_of(PipelineState::new(
+            pipeline_id(),
+            "Request".to_string(),
+            vec![worker("w1")],
+            std::num::NonZeroUsize::new(4).expect("turn limit is non-zero"),
+            0,
+        ));
+        snapshot.status = RunStatus::Running;
+        snapshot
+            .state
+            .consume_turn()
+            .expect("turn should be consumed");
+        snapshot.turns.push(TurnRecord {
+            kind: TurnKind::Worker,
+            prompt: "Prompt".to_string(),
+            phase: CallPhase::Calling,
+        });
+        assert!(snapshot.has_interrupted_call());
+
+        let driver = Driver::new(
+            PanickingLlmClient,
+            templates_dir("piper_ckpt_interrupted"),
+            RecordingCheckpointer::default(),
+        );
+
+        let resumed = driver
+            .advance(snapshot)
+            .expect("opening an interrupted snapshot should not error");
+        assert_eq!(resumed.status, RunStatus::InterruptedCall);
+
+        let marks = driver
+            .checkpointer
+            .marks
+            .lock()
+            .expect("marks lock should not be poisoned");
+        assert_eq!(
+            marks.as_slice(),
+            [(RunStatus::InterruptedCall, Phase::Calling(TurnKind::Worker))]
+        );
+    }
+
+    #[test]
+    fn resume_applies_a_stored_response_without_calling_the_model() {
+        let mut snapshot = snapshot_of(PipelineState::new(
+            pipeline_id(),
+            "Request".to_string(),
+            vec![worker("w1")],
+            std::num::NonZeroUsize::new(4).expect("turn limit is non-zero"),
+            0,
+        ));
+        snapshot.status = RunStatus::Running;
+        snapshot
+            .state
+            .consume_turn()
+            .expect("turn should be consumed");
+        snapshot.turns.push(TurnRecord {
+            kind: TurnKind::Worker,
+            prompt: "Prompt".to_string(),
+            phase: CallPhase::Received {
+                raw_output: "DONE resumed".to_string(),
+            },
+        });
+
+        let driver = Driver::new(
+            PanickingLlmClient,
+            templates_dir("piper_ckpt_reuse"),
+            RecordingCheckpointer::default(),
+        );
+
+        let finished = driver
+            .advance(snapshot)
+            .expect("a stored response should apply without the model");
+        assert_eq!(finished.status, RunStatus::Done);
+        assert_eq!(
+            finished.terminal,
+            Some(TerminalOutcome::Done {
+                result: vec!["resumed".to_string()],
+            })
+        );
+
+        let marks = driver
+            .checkpointer
+            .marks
+            .lock()
+            .expect("marks lock should not be poisoned");
+        assert_eq!(
+            marks.as_slice(),
+            [(RunStatus::Done, Phase::Applied(TurnKind::Worker))]
+        );
+    }
+
     #[test]
     fn test_run_with_dsl() {
-        let temp_dir = std::env::temp_dir().join("piper_tests_dsl");
-        std::fs::create_dir_all(&temp_dir).unwrap();
-        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template").unwrap();
-
         let parent_fork = "FORK f1 Analyze the alternative".to_string();
         let fork_knowledge = "SET The behavior needs a failing test.".to_string();
         let fork_result = "CONTINUE".to_string();
@@ -411,26 +795,11 @@ mod tests {
             ]),
         };
 
-        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let driver = Driver::new(client, templates_dir("piper_tests_dsl"), NoopCheckpointer);
         let state = PipelineState::new(
             pipeline_id(),
             "Request".to_string(),
-            vec![
-                Aspect {
-                    id: "a1".to_string(),
-                    name: "Distill".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Prompt".to_string(),
-                    model: None,
-                },
-                Aspect {
-                    id: "a2".to_string(),
-                    name: "Implement".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Prompt".to_string(),
-                    model: None,
-                },
-            ],
+            vec![worker("a1"), worker("a2")],
             std::num::NonZeroUsize::new(10).expect("turn limit is non-zero"),
             3,
         );
@@ -444,22 +813,12 @@ mod tests {
         PipelineState::new(
             pipeline_id(),
             "Approve the release".to_string(),
-            vec![
-                Aspect {
-                    id: "approval".to_string(),
-                    name: "Release Approval".to_string(),
-                    aspect_type: AspectType::Gate,
-                    prompt: String::new(),
-                    model: None,
-                },
-                Aspect {
-                    id: "ship".to_string(),
-                    name: "Ship".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Ship it".to_string(),
-                    model: None,
-                },
-            ],
+            vec![gate("approval"), {
+                let mut ship = worker("ship");
+                ship.name = "Ship".to_string();
+                ship.prompt = "Ship it".to_string();
+                ship
+            }],
             std::num::NonZeroUsize::new(2).expect("turn limit should be non-zero"),
             0,
         )
@@ -467,49 +826,45 @@ mod tests {
 
     #[test]
     fn test_advance_pauses_at_gate_and_resume_controls_the_run() {
-        let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
-        std::fs::write(temp_dir.path().join("aspect-worker.md"), "Mock template")
-            .expect("worker template should be written");
         let client = MockLlmClient {
             responses: Mutex::new(vec!["DONE Shipped".to_string()]),
         };
-        let driver = Driver::new(
-            client,
-            PromptTemplates::directory(temp_dir.path().to_path_buf()),
-        );
+        let driver = Driver::new(client, templates_dir("piper_tests_gate"), NoopCheckpointer);
 
-        // (a) Advancing pauses at the gate without reading any terminal input.
         let paused = driver
-            .advance(gate_then_worker_state())
+            .advance(snapshot_of(gate_then_worker_state()))
             .expect("advance should pause at the gate");
-        assert!(matches!(paused.status, DriveStatus::WaitingAtGate));
+        assert_eq!(paused.status, RunStatus::WaitingAtGate);
         assert_eq!(paused.state.frame().current_index, 0);
         assert_eq!(paused.state.current_aspect().id, "approval");
 
-        // (b) Resuming with approval drives past the gate to the worker's terminal.
         let approved = driver
-            .resume(paused.state, GateDecision::Continue)
+            .resume(paused, GateDecision::Continue)
             .expect("resume should advance past the gate");
-        match approved.status {
-            DriveStatus::Done(results) => assert_eq!(results, vec!["Shipped"]),
-            other => panic!("approved resume should complete, got {other:?}"),
-        }
+        assert_eq!(approved.status, RunStatus::Done);
+        assert_eq!(
+            approved.terminal,
+            Some(TerminalOutcome::Done {
+                result: vec!["Shipped".to_string()],
+            })
+        );
 
-        // (c) Resuming with abort ends the run without a Result.
         let paused_again = driver
-            .advance(gate_then_worker_state())
+            .advance(snapshot_of(gate_then_worker_state()))
             .expect("advance should pause at the gate again");
         let aborted = driver
-            .resume(paused_again.state, GateDecision::Abort)
+            .resume(paused_again, GateDecision::Abort)
             .expect("abort should end the run");
-        assert!(matches!(aborted.status, DriveStatus::Aborted));
+        assert_eq!(aborted.status, RunStatus::Aborted);
+        assert_eq!(aborted.terminal, Some(TerminalOutcome::Aborted));
     }
 
     #[test]
     fn test_fork_runs_current_aspect_and_returns_knowledge_to_parent() {
-        let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
+        let dir = std::env::temp_dir().join("piper_tests_fork_context");
+        std::fs::create_dir_all(&dir).expect("template directory should be created");
         std::fs::write(
-            temp_dir.path().join("aspect-worker.md"),
+            dir.join("aspect-worker.md"),
             "Aspect: {{aspect_id}}\nFork: {{fork_prompt}}\nContext:\n{{context}}",
         )
         .expect("worker template should be written");
@@ -526,27 +881,20 @@ mod tests {
             ]),
             prompts: Mutex::new(Vec::new()),
         };
-        let driver = Driver::new(
-            client,
-            PromptTemplates::directory(temp_dir.path().to_path_buf()),
-        );
+        let driver = Driver::new(client, PromptTemplates::directory(dir), NoopCheckpointer);
         let state = PipelineState::new(
             pipeline_id(),
             "Write a short story".to_string(),
             vec![
-                Aspect {
-                    id: "branch".to_string(),
-                    name: "Branch".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Create branches".to_string(),
-                    model: None,
+                {
+                    let mut branch = worker("branch");
+                    branch.prompt = "Create branches".to_string();
+                    branch
                 },
-                Aspect {
-                    id: "story".to_string(),
-                    name: "Story".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Compose from the joined Corpus".to_string(),
-                    model: None,
+                {
+                    let mut story = worker("story");
+                    story.prompt = "Compose from the joined Corpus".to_string();
+                    story
                 },
             ],
             std::num::NonZeroUsize::new(7).expect("turn limit is non-zero"),
@@ -580,27 +928,19 @@ mod tests {
 
     #[test]
     fn test_run_stops_when_turn_limit_is_reached() {
-        let temp_dir = std::env::temp_dir().join("piper_tests_turn_limit");
-        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
-        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
-            .expect("test prompt should be written");
-
         let jump_response = "JUMP a1".to_string();
-
         let client = MockLlmClient {
             responses: Mutex::new(vec![jump_response.clone(), jump_response]),
         };
-        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let driver = Driver::new(
+            client,
+            templates_dir("piper_tests_turn_limit"),
+            NoopCheckpointer,
+        );
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
-            vec![Aspect {
-                id: "a1".to_string(),
-                name: "Aspect 1".to_string(),
-                aspect_type: AspectType::Worker,
-                prompt: "Prompt".to_string(),
-                model: None,
-            }],
+            vec![worker("a1")],
             std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
             3,
         );
@@ -611,8 +951,9 @@ mod tests {
 
     #[test]
     fn test_final_aspect_can_fork_and_join() {
-        let temp_dir = tempfile::tempdir().expect("test prompt directory should exist");
-        std::fs::write(temp_dir.path().join("aspect-worker.md"), "{{context}}")
+        let dir = std::env::temp_dir().join("piper_tests_final_fork");
+        std::fs::create_dir_all(&dir).expect("template directory should be created");
+        std::fs::write(dir.join("aspect-worker.md"), "{{context}}")
             .expect("worker template should be written");
 
         let client = MockLlmClient {
@@ -623,19 +964,14 @@ mod tests {
                 "CONTINUE".to_string(),
             ]),
         };
-        let driver = Driver::new(
-            client,
-            PromptTemplates::directory(temp_dir.path().to_path_buf()),
-        );
+        let driver = Driver::new(client, PromptTemplates::directory(dir), NoopCheckpointer);
         let state = PipelineState::new(
             pipeline_id(),
             "Verify the answer".to_string(),
-            vec![Aspect {
-                id: "verify".to_string(),
-                name: "Verify".to_string(),
-                aspect_type: AspectType::Worker,
-                prompt: "Fork one independent check".to_string(),
-                model: None,
+            vec![{
+                let mut verify = worker("verify");
+                verify.prompt = "Fork one independent check".to_string();
+                verify
             }],
             std::num::NonZeroUsize::new(4).expect("turn limit is non-zero"),
             1,
@@ -649,29 +985,21 @@ mod tests {
 
     #[test]
     fn test_run_recovers_a_malformed_worker_response() {
-        let temp_dir = std::env::temp_dir().join("piper_tests_recovery");
-        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
-        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
-            .expect("worker template should be written");
-        std::fs::write(temp_dir.join("aspect-recover.md"), "Recovery template")
-            .expect("recovery template should be written");
-
-        let recovered_response = "DONE Recovered result".to_string();
-
         let client = MockLlmClient {
-            responses: Mutex::new(vec!["not a DSL action".to_string(), recovered_response]),
+            responses: Mutex::new(vec![
+                "not a DSL action".to_string(),
+                "DONE Recovered result".to_string(),
+            ]),
         };
-        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let driver = Driver::new(
+            client,
+            templates_dir("piper_tests_recovery"),
+            NoopCheckpointer,
+        );
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
-            vec![Aspect {
-                id: "a1".to_string(),
-                name: "Aspect 1".to_string(),
-                aspect_type: AspectType::Worker,
-                prompt: "Prompt".to_string(),
-                model: None,
-            }],
+            vec![worker("a1")],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
             1,
         );
@@ -681,10 +1009,58 @@ mod tests {
     }
 
     #[test]
+    fn recovery_calls_checkpoint_through_their_own_phases() {
+        let client = MockLlmClient {
+            responses: Mutex::new(vec![
+                "not a DSL action".to_string(),
+                "DONE Recovered".to_string(),
+            ]),
+        };
+        let driver = Driver::new(
+            client,
+            templates_dir("piper_tests_recovery_marks"),
+            RecordingCheckpointer::default(),
+        );
+        let state = PipelineState::new(
+            pipeline_id(),
+            "Initial".to_string(),
+            vec![worker("a1")],
+            std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
+            1,
+        );
+
+        driver
+            .advance(snapshot_of(state))
+            .expect("recovery should succeed");
+
+        let marks = driver
+            .checkpointer
+            .marks
+            .lock()
+            .expect("marks lock should not be poisoned");
+        assert_eq!(
+            marks.as_slice(),
+            [
+                (RunStatus::Running, Phase::Calling(TurnKind::Worker)),
+                (RunStatus::Running, Phase::Received(TurnKind::Worker)),
+                (
+                    RunStatus::Running,
+                    Phase::Calling(TurnKind::FormatterRecovery)
+                ),
+                (
+                    RunStatus::Running,
+                    Phase::Received(TurnKind::FormatterRecovery)
+                ),
+                (RunStatus::Done, Phase::Applied(TurnKind::FormatterRecovery)),
+            ]
+        );
+    }
+
+    #[test]
     fn test_run_set_replaces_current_worker_contribution() {
-        let temp_dir = std::env::temp_dir().join("piper_tests_knowledge");
-        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
-        std::fs::write(temp_dir.join("aspect-worker.md"), "Context:\n{{context}}")
+        let dir = std::env::temp_dir().join("piper_tests_knowledge");
+        std::fs::create_dir_all(&dir).expect("template directory should be created");
+        std::fs::write(dir.join("aspect-worker.md"), "Context:\n{{context}}")
             .expect("worker template should be written");
 
         let client = RecordingMockLlmClient {
@@ -695,17 +1071,11 @@ mod tests {
             ]),
             prompts: Mutex::new(Vec::new()),
         };
-        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let driver = Driver::new(client, PromptTemplates::directory(dir), NoopCheckpointer);
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
-            vec![Aspect {
-                id: "a1".to_string(),
-                name: "Aspect 1".to_string(),
-                aspect_type: AspectType::Worker,
-                prompt: "Prompt".to_string(),
-                model: None,
-            }],
+            vec![worker("a1")],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
             3,
         );
@@ -730,10 +1100,10 @@ mod tests {
 
     #[test]
     fn test_run_updates_corpus_without_changing_request() {
-        let temp_dir = std::env::temp_dir().join("piper_tests_update_knowledge");
-        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
+        let dir = std::env::temp_dir().join("piper_tests_update_knowledge");
+        std::fs::create_dir_all(&dir).expect("template directory should be created");
         std::fs::write(
-            temp_dir.join("aspect-worker.md"),
+            dir.join("aspect-worker.md"),
             "Request: {{request}}\nContext:\n{{context}}",
         )
         .expect("worker template should be written");
@@ -746,26 +1116,11 @@ mod tests {
             ]),
             prompts: Mutex::new(Vec::new()),
         };
-        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let driver = Driver::new(client, PromptTemplates::directory(dir), NoopCheckpointer);
         let state = PipelineState::new(
             pipeline_id(),
             "Keep this request intact".to_string(),
-            vec![
-                Aspect {
-                    id: "a1".to_string(),
-                    name: "Aspect 1".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Prompt".to_string(),
-                    model: None,
-                },
-                Aspect {
-                    id: "a2".to_string(),
-                    name: "Aspect 2".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Prompt".to_string(),
-                    model: None,
-                },
-            ],
+            vec![worker("a1"), worker("a2")],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
             3,
         );
@@ -790,25 +1145,14 @@ mod tests {
 
     #[test]
     fn test_run_stop_returns_no_final_result() {
-        let temp_dir = std::env::temp_dir().join("piper_tests_stop");
-        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
-        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
-            .expect("worker template should be written");
-
         let client = MockLlmClient {
             responses: Mutex::new(vec!["STOP Missing requirements".to_string()]),
         };
-        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let driver = Driver::new(client, templates_dir("piper_tests_stop"), NoopCheckpointer);
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
-            vec![Aspect {
-                id: "a1".to_string(),
-                name: "Aspect 1".to_string(),
-                aspect_type: AspectType::Worker,
-                prompt: "Prompt".to_string(),
-                model: None,
-            }],
+            vec![worker("a1")],
             std::num::NonZeroUsize::new(2).expect("turn limit is non-zero"),
             3,
         );
@@ -819,28 +1163,21 @@ mod tests {
 
     #[test]
     fn test_done_inside_fork_terminates_whole_run() {
-        let temp_dir = std::env::temp_dir().join("piper_tests_fork_done");
-        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
-        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
-            .expect("worker template should be written");
-
         let client = MockLlmClient {
             responses: Mutex::new(vec![
                 "FORK f1 Explore the alternative".to_string(),
                 "DONE Whole run complete".to_string(),
             ]),
         };
-        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let driver = Driver::new(
+            client,
+            templates_dir("piper_tests_fork_done"),
+            NoopCheckpointer,
+        );
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
-            vec![Aspect {
-                id: "a1".to_string(),
-                name: "Aspect 1".to_string(),
-                aspect_type: AspectType::Worker,
-                prompt: "Prompt".to_string(),
-                model: None,
-            }],
+            vec![worker("a1")],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
             0,
         );
@@ -852,11 +1189,6 @@ mod tests {
 
     #[test]
     fn test_done_rejects_unjoined_fork_work() {
-        let temp_dir = std::env::temp_dir().join("piper_tests_unjoined_fork");
-        std::fs::create_dir_all(&temp_dir).expect("test prompt directory should exist");
-        std::fs::write(temp_dir.join("aspect-worker.md"), "Mock template")
-            .expect("worker template should be written");
-
         let client = MockLlmClient {
             responses: Mutex::new(vec![
                 "FORK f1 Analyze the alternative".to_string(),
@@ -864,26 +1196,15 @@ mod tests {
                 "DONE Parent complete".to_string(),
             ]),
         };
-        let driver = Driver::new(client, PromptTemplates::directory(temp_dir));
+        let driver = Driver::new(
+            client,
+            templates_dir("piper_tests_unjoined_fork"),
+            NoopCheckpointer,
+        );
         let state = PipelineState::new(
             pipeline_id(),
             "Initial".to_string(),
-            vec![
-                Aspect {
-                    id: "a1".to_string(),
-                    name: "Aspect 1".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Prompt".to_string(),
-                    model: None,
-                },
-                Aspect {
-                    id: "a2".to_string(),
-                    name: "Aspect 2".to_string(),
-                    aspect_type: AspectType::Worker,
-                    prompt: "Prompt".to_string(),
-                    model: None,
-                },
-            ],
+            vec![worker("a1"), worker("a2")],
             std::num::NonZeroUsize::new(3).expect("turn limit is non-zero"),
             3,
         );
