@@ -526,10 +526,7 @@ mod tests {
             env.get("PIPER_LLM_INVOCATION"),
             Some(&"claude -p --model {{model}} {{prompt}}".to_string())
         );
-        assert_eq!(
-            env.get("PIPER_DEFAULT_MODEL"),
-            Some(&"sonnet".to_string())
-        );
+        assert_eq!(env.get("PIPER_DEFAULT_MODEL"), Some(&"sonnet".to_string()));
     }
 
     #[test]
