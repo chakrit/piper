@@ -69,6 +69,30 @@ fn validate_project_metadata(
     Ok(())
 }
 
+/// Overwrite `path` with `content` as an all-or-nothing replacement: write a private
+/// sibling temp, sync it, rename over the destination, then sync the parent directory. A
+/// failed rename leaves any previous file authoritative. The shared owner for every
+/// durable overwrite; `atomic_create` remains the create-or-observe primitive.
+// Consumed by `run_storage`, which the driver-checkpoint slice wires into live code.
+#[allow(dead_code)]
+pub(super) fn atomic_replace(path: &Path, content: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("State path {path:?} has no parent directory"))?;
+    let temporary_path = write_temporary(path, content)?;
+    match fs::rename(&temporary_path, path) {
+        Ok(()) => {
+            sync_directory(parent)?;
+            Ok(())
+        }
+        Err(error) => {
+            let error =
+                anyhow::Error::new(error).context(format!("Could not replace state file {path:?}"));
+            fail_after_cleanup(&temporary_path, error)
+        }
+    }
+}
+
 fn atomic_create(path: &Path, content: &[u8]) -> Result<bool> {
     let parent = path
         .parent()
@@ -164,23 +188,31 @@ fn fail_after_cleanup<T>(path: &Path, error: anyhow::Error) -> Result<T> {
 }
 
 fn create_state_directories(project_directory: &Path) -> Result<()> {
-    fs::create_dir_all(project_directory)
-        .with_context(|| format!("Could not create state directory {project_directory:?}"))?;
+    let projects = project_directory
+        .parent()
+        .context("Project state directory must be below projects")?;
+    let piper = projects
+        .parent()
+        .context("Projects state directory must be below piper")?;
+    for directory in [piper, projects, project_directory] {
+        ensure_private_directory(directory)?;
+    }
+
+    Ok(())
+}
+
+/// Create `path` and any missing ancestors, then narrow `path` itself to mode `0700`. The
+/// single owner of state-directory creation; callers building nested layouts invoke it per
+/// level so every level is secured, not only the leaf.
+pub(super) fn ensure_private_directory(path: &Path) -> Result<()> {
+    fs::create_dir_all(path)
+        .with_context(|| format!("Could not create state directory {path:?}"))?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-
-        let projects = project_directory
-            .parent()
-            .context("Project state directory must be below projects")?;
-        let piper = projects
-            .parent()
-            .context("Projects state directory must be below piper")?;
-        for directory in [piper, projects, project_directory] {
-            fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-                .with_context(|| format!("Could not secure state directory {directory:?}"))?;
-        }
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("Could not secure state directory {path:?}"))?;
     }
 
     Ok(())
