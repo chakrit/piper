@@ -55,7 +55,7 @@ before it.
 A later phase adds an interactive chat mode, deliberately unlike a traditional harness
 chat:
 
-- Each user input is entered into the Piper tree as a Request, not sent to a free-form
+- Each user input is entered into the Piper tree as a Goal, not sent to a free-form
   model conversation.
 - A TUI streams pipeline progress — Aspect position, forks, Corpus growth, and gates.
 - The pipeline runs to completion before the user can enter the next input, unless the

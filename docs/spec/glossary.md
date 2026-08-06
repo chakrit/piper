@@ -14,8 +14,9 @@ code-vs-UI split. A rename anywhere is a rename everywhere.
 | **Station**   | one step in a Blueprint: a prompt + model settings + toolset (a mini-harness). |
 | **Entrypoint**| a named Station a Run may start at. A Blueprint has one or more.          |
 | **Worker**    | a Station fired in a Run — a harnessed model doing the step's work.       |
-| **Run**       | one execution instance of a Blueprint: a pinned Version + Order + its own work plane. Many concurrent per Blueprint. |
-| **Order**     | the immutable input a Run fulfills (formerly "Request").                  |
+| **Run**       | one execution instance of a Blueprint: a pinned Version + Goal + its own work plane. Many concurrent per Blueprint. |
+| **Goal**      | the one immutable objective a Run pursues, set at launch and broadcast unchanged to every Station firing (formerly "Request"). |
+| **Order**     | the per-firing bundle the Driver assembles and hands one Worker: the Goal, the current Corpus, and the firing Station's own parameters (prompt, model settings, toolset, work plane). Not free text — no model-generated prose is passed Station-to-Station. |
 | **Knowledge** | one Worker's contribution to the Corpus.                                  |
 | **Corpus**    | the shared, accumulated Knowledge within one Run.                         |
 | **Sandbox**   | the isolated execution environment realizing a Run's work plane — one per Run, copy-on-write forkable, backed by Dagger. |
@@ -39,8 +40,9 @@ They sound alike and mean different things. Keep them distinct.
 
 ## Renames from the prior vocabulary
 
-The earlier engine specs used **Request → Order**, **Aspect → Station**, and **Pipeline →
-Blueprint**. The old terms are retired; nothing new uses them.
+The earlier engine specs used **Request → Goal**, **Aspect → Station**, and **Pipeline →
+Blueprint**. **Order** is repurposed: it now names the per-firing bundle above, not the
+run-level input (which is the **Goal**). The old terms are retired; nothing new uses them.
 
 **"Operator" is not a term.** The control seat is the **Supervisor**. The lowercase
 "operator" still in the implemented [`run-lifecycle.md`](run-lifecycle.md) means the human

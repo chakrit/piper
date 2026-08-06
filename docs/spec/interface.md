@@ -43,7 +43,7 @@ one sanctioned crossing back is **promote** ([`blueprint.md`](blueprint.md)).
 
 The heartbeat: on a Blueprint canvas, press **Run**, watch material flow through the
 Stations live, press **Stop** to intervene. `[Run]` opens a launch that binds the work
-plane (sandbox) and the Order, then slides into a new Run world. One direct control;
+plane (sandbox) and the Goal, then slides into a new Run world. One direct control;
 everything else orbits it.
 
 ## The Supervisor

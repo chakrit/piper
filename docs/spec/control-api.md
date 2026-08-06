@@ -38,7 +38,7 @@ invented RPC routes.
 |-----------|---------|
 | list, inspect | `GET /blueprints`, `GET /blueprints/{id}`, `GET /runs`, `GET /runs/{id}`, `GET /runs/{id}/corpus` |
 | edit a Blueprint → new Version | `POST /blueprints/{id}/versions` — the Version is immutable; the edit is the body |
-| start a Run | `POST /runs` — body pins a Version, entrypoint, and Order; advances to the first outcome |
+| start a Run | `POST /runs` — body pins a Version, entrypoint, and Goal; advances to the first outcome |
 | fork a Run | `POST /runs/{id}/forks` — creates a new Run |
 | resume a Gate | `POST /runs/{id}/gate-decisions` — records approval of that exact Gate record |
 | rewind a Run | `POST /runs/{id}/rewinds` — targets a checkpoint; appends, never destroys forward history |

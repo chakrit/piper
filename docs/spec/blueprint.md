@@ -43,7 +43,9 @@ A Station within a Version is:
 A **Run** is one execution instance. It carries:
 
 - a reference to its pinned **Version** and the **entrypoint** it started at;
-- its immutable **Order** (the input);
+- the run-wide **Goal** it pursues — its one immutable objective, broadcast to every
+  Station firing (each firing's per-Station **Order** is assembled by the Driver, see
+  [`engine.md`](engine.md));
 - its own **work plane** — an isolated **Sandbox** (filesystem and process scope). Each Run
   has its own, which is what lets Runs of one Blueprint execute in parallel without
   collision. The Sandbox mechanism is defined in [`run-lifecycle.md`](run-lifecycle.md);
@@ -70,12 +72,12 @@ editing, fixes the *template*.
 ```text
 Blueprint 1───* Version 1───* Station
 Blueprint 1───* Run
-Run *───1 Version (pinned)      Run 1───1 Order      Run 1───1 Corpus      Run 1───1 work plane
+Run *───1 Version (pinned)      Run 1───1 Goal       Run 1───1 Corpus      Run 1───1 work plane
 Run  ─ optional local patch (diverged from its pinned Version)
 ```
 
 The persistence store (PostgreSQL for structured state, an OCI registry for Sandbox
 snapshots) and the Sandbox mechanism are fixed in
-[`run-lifecycle.md`](run-lifecycle.md). Open choices that still gate implementation — Order
-shape and Version identity — are tracked in [`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md), not
-decided here.
+[`run-lifecycle.md`](run-lifecycle.md). The one open choice that still gates implementation
+here — Version identity (item 7) — is tracked in [`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md),
+not decided here.

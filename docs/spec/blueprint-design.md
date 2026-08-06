@@ -8,7 +8,7 @@ execution is in [`engine.md`](engine.md). This spec is the authoring guidance.
 
 ## Philosophy
 
-A Blueprint decomposes an Order into isolated Stations. A Worker preserves the Order and
+A Blueprint decomposes a **Goal** into isolated Stations. A Worker preserves the Goal and
 uses `set` to contribute durable Knowledge to the Corpus; later Stations consume that
 expanded Corpus, so each concern is handled once and its findings stay available. Stations
 also do general work (code, git, commands), not only text.
@@ -25,7 +25,7 @@ Order Stations so dependent work follows the Knowledge it needs:
 
 ## Design principles
 
-- **Order integrity** — a Worker never rewrites the Order.
+- **Goal integrity** — a Worker never rewrites the Goal.
 - **One contribution per Station** — `set` replaces the Worker's own contribution; keep it a
   concise consolidated statement, not arbitrary keys.
 - **Corpus first** — a later Station consumes earlier findings rather than rediscovering them.
@@ -54,7 +54,7 @@ Pipes that share nothing belong in separate Blueprints, not extra entrypoints.
 
 ## Design workflow
 
-1. **Order** — state the desired outcome and immutable input together as one Order.
+1. **Goal** — state the desired outcome as the Run's one immutable Goal.
 2. **Identity** — choose a durable Blueprint name meaningful across edits.
 3. **Constraint extraction** — identify the durable facts and decisions later Stations need.
 4. **Station design** — give each Station one concern; set its prompt, model, and toolset;

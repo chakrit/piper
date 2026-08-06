@@ -28,9 +28,10 @@ definition of the work.
 
 The Worker runs as a tool-calling loop, not a single parsed line. Each Station:
 
-1. The Driver invokes the model — through a **Provider** ([`providers.md`](providers.md)),
-   the provider-neutral model adapter — with the Station's prompt, the Order, the current
-   Corpus, and the Station's toolset.
+1. The Driver assembles this firing's **Order** — the run-wide **Goal**, the current
+   Corpus, and the Station's own parameters (prompt, model settings, toolset) — and invokes
+   the model with it through a **Provider** ([`providers.md`](providers.md)), the
+   provider-neutral model adapter.
 2. The model calls tools. Two kinds:
    - **work tools** — read/write files, run commands, git, and whatever the Station is
      provisioned with. Executed in the Run's work plane (see [`run-lifecycle.md`]).

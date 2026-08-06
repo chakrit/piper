@@ -8,6 +8,14 @@ Each item is a decision to make, not a task to build. When one is settled, write
 into the spec it names and strike it here. The specs are the build target; this file is
 what stands between them and a swarm.
 
+## Working protocol
+
+Worked one item at a time, in order, to completion — no code and no build until this queue
+is empty and the specs read pristine. Each item: discuss it at length, arrive at a
+conclusion, ratify that conclusion into the spec it names, `ace-save`, then take the next
+item. Nothing is half-decided and left; a settled item is written in and struck here in the
+same pass.
+
 ## Blocking — shared contracts every builder depends on
 
 All five runtime-spine contracts are settled and written into the specs: Sandbox and
@@ -17,8 +25,6 @@ persistence store ([`run-lifecycle.md`](run-lifecycle.md)), control API and even
 
 ## Data-model & design decisions
 
-6. **Order shape** — free text, or structured/parameterized template variables per Blueprint?
-   ([`blueprint.md`](blueprint.md))
 7. **Version identity & storage** — how a Version is identified, stored, and diffed; the
    edit→new-Version mechanics. ([`blueprint.md`](blueprint.md))
 8. **In-run local patch** — how a Run-local divergence is represented and diffed against its

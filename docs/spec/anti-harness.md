@@ -3,7 +3,7 @@
 - **Status:** accepted
 - **Scope:** Piper's design rationale and the boundary between model work and mechanical orchestration.
 
-> Terminology follows [`glossary.md`](glossary.md): **Station** (was Aspect), **Order**
+> Terminology follows [`glossary.md`](glossary.md): **Station** (was Aspect), **Goal**
 > (was Request), and **control-flow tools** (was the single-line DSL). The rationale below
 > is unchanged by those renames. A Worker now also does general work (code, git, commands)
 > through **work tools**, not only text — see [`engine.md`](engine.md).
@@ -53,7 +53,7 @@ limited attention on orchestration.
 ## Alignment by construction
 
 A Worker cannot drift from the workflow because it is never given the room to. It sees one
-Station, the immutable Order, the Corpus, and its toolset; it does not hold the
+Station, the immutable Goal, the Corpus, and its toolset; it does not hold the
 procedure, choose the next step, or coordinate branches. Every decision the model could
 get wrong about orchestration has already been made in code before the Worker runs.
 
