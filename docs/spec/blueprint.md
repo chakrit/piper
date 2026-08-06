@@ -30,7 +30,8 @@ in-flight Run, and two concurrent Runs may execute different Versions.
 
 A Station within a Version is:
 
-- a **prompt** and **model settings** (the mini-harness);
+- a **prompt**, **model settings**, and the **capabilities** it requires of the model
+  (resolved against the Registry, see [`providers.md`](providers.md));
 - a **toolset** — the work tools and control-flow tools the Worker may call
   (see [`engine.md`](engine.md));
 - a **type** — `worker` (default) or `gate`;
@@ -43,9 +44,9 @@ A **Run** is one execution instance. It carries:
 
 - a reference to its pinned **Version** and the **entrypoint** it started at;
 - its immutable **Order** (the input);
-- its own **work plane** — an isolated sandbox (checkout, filesystem, git). Each Run has
-  its own, which is what lets Runs of one Blueprint execute in parallel without collision.
-  The sandbox mechanism is defined in [`run-lifecycle.md`](run-lifecycle.md);
+- its own **work plane** — an isolated **Sandbox** (filesystem and process scope). Each Run
+  has its own, which is what lets Runs of one Blueprint execute in parallel without
+  collision. The Sandbox mechanism is defined in [`run-lifecycle.md`](run-lifecycle.md);
 - its **Corpus** and shared execution budget; and
 - durable execution state (position, frame stack, status).
 
@@ -73,6 +74,8 @@ Run *───1 Version (pinned)      Run 1───1 Order      Run 1───1
 Run  ─ optional local patch (diverged from its pinned Version)
 ```
 
-Open choices that gate implementation — the persistence store, the sandbox mechanism,
-Order shape, and Version identity — are tracked in
-[`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md), not decided here.
+The persistence store (PostgreSQL for structured state, an OCI registry for Sandbox
+snapshots) and the Sandbox mechanism are fixed in
+[`run-lifecycle.md`](run-lifecycle.md). Open choices that still gate implementation — Order
+shape and Version identity — are tracked in [`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md), not
+decided here.

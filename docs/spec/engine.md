@@ -28,8 +28,9 @@ definition of the work.
 
 The Worker runs as a tool-calling loop, not a single parsed line. Each Station:
 
-1. The Driver invokes the model with the Station's prompt, the Order, the current Corpus,
-   and the Station's toolset.
+1. The Driver invokes the model — through a **Provider** ([`providers.md`](providers.md)),
+   the provider-neutral model adapter — with the Station's prompt, the Order, the current
+   Corpus, and the Station's toolset.
 2. The model calls tools. Two kinds:
    - **work tools** — read/write files, run commands, git, and whatever the Station is
      provisioned with. Executed in the Run's work plane (see [`run-lifecycle.md`]).
@@ -86,7 +87,8 @@ so repair never becomes the normal path.
 
 The engine is headless: it advances until it produces one outcome — waiting at a Gate,
 `done`, `stopped`, `failed`, or an interrupted call — and never prompts. Attended and
-interactive surfaces (CLI, the Supervisor) drive it through the control API; they choose
-when to advance and how to present a pause, but they never implement transitions. Durable
+interactive surfaces (CLI, the Supervisor) drive it through the control API
+([`control-api.md`](control-api.md)); they choose when to advance and how to present a
+pause, but they never implement transitions. Durable
 identity, checkpointing, the work plane, and Gate resumption are in
 [`run-lifecycle.md`](run-lifecycle.md).

@@ -27,7 +27,9 @@ is deliberate and load-bearing:
   settings, toolsets, topology, entrypoints. This is Blueprint-plane work on the *current*
   Version.
 - **Run mode** — a Run, live or replayed. The canvas shows the Run's **pinned Version**,
-  animated as material flows through it. Here you *steer*, you do not restructure.
+  animated as material flows through it. Live and replayed are the same durable event stream
+  ([`control-api.md`](control-api.md)) — tailed or replayed. Here you *steer*, you do not
+  restructure.
 
 The mode is the plane and the Version rule made visible: design mode edits the template;
 run mode shows an immutable pinned Version, so "you cannot edit a live Run's Blueprint" is
@@ -61,10 +63,9 @@ new machine onto a running one.
 ## Gates in the interface
 
 A pending Gate is a **spatial object** on the canvas, not an inbox: its Station pulses and
-floats a "needs you" chip where the Run sits, and a **fly-to-next** control sweeps between
-pending Gates. (A Gate is also a durable, cross-Run-queryable decision record — see
-[`run-lifecycle.md`](run-lifecycle.md); the fleet-scale presentation of many pending Gates
-is deferred, see [`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md).)
+floats a "needs you" chip where the Run sits, and a **fly-to-next** control sweeps between the
+Run's pending Gates. (A Gate is also a durable per-Run decision record — see
+[`run-lifecycle.md`](run-lifecycle.md).)
 
 ## Deployment
 

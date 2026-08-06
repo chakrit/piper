@@ -34,7 +34,9 @@ doc on the subject already exists, amend that doc instead of writing a second on
 | `blueprint.md`       | Blueprint template, Versions, Stations, and the Run instance data model  | draft    |
 | `blueprint-design.md`| Authoring Station sequences: ordering, principles, entrypoints, workflow  | draft    |
 | `engine.md`          | Driver, the Station tool-call loop, Worker toolset, Corpus, and Forks     | draft    |
+| `providers.md`       | The provider-neutral model port, capability map, and refreshable index    | draft    |
 | `supervisor.md`      | The interactive control seat and the Blueprint-vs-work-plane boundary     | draft    |
+| `control-api.md`     | The engine↔client contract: RESTful operations, resource model, transport | draft    |
 | `interface.md`       | The world model, floating chrome, and the design/run mode separation     | draft    |
 | `run-lifecycle.md`   | Durable run identity, storage, checkpointing, CLI lifecycle, sandbox      | accepted |
 | `OPEN-QUESTIONS.md`  | The decision queue that gates development — emptied before building       | queue    |

@@ -134,18 +134,38 @@ copied into run snapshots.
 These extend the durable model for the Blueprint/Version and factory-harness design; the
 mechanism choices are open ([`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md)).
 
-- **Work plane per Run.** Each Run owns an isolated sandbox — its checkout, filesystem, and
-  git — so Runs of one Blueprint execute in parallel without collision. Work tools
-  ([`engine.md`](engine.md)) act only inside it. The sandbox mechanism (container, git
-  worktree, or other) is undecided.
+- **Work plane per Run.** Each Run owns an isolated **Sandbox** — an execution environment
+  (filesystem and process scope) that its work tools ([`engine.md`](engine.md)) are bound to
+  and act only within, so Runs of one Blueprint execute in parallel without collision. The
+  Sandbox sits behind a backend interface with a `provision → bound handle → teardown`
+  lifecycle; the concrete backend is pluggable and the engine knows only the interface.
+  Provisioning a repo or any other material into the Sandbox is a work-process step running
+  inside it, not part of the Sandbox contract.
+- **Sandbox backend.** The phase-1 backend is the Dagger Rust SDK (`dagger-sdk`), whose
+  `Container` is an immutable, content-addressed, copy-on-write value. A Fork is a
+  copy-on-write branch of the Sandbox, and the Corpus forks with it — one Run-state
+  snapshot, one discipline. A checkpoint pins the container's content-addressed OCI digest,
+  published to the registry (persistence store below), so a Run rehydrates its work plane by
+  pulling that image on resume without a live session, satisfying the durable-resume model
+  above.
+- **Persistence store.** Structured state — Blueprints, Versions, Runs, Corpora, Gate
+  decision records, `active` pointers, and in-run patches — lives in **PostgreSQL**,
+  normalized and loss-averse: Versions are append-only rows, Run status transitions are an
+  event log. Sandbox work-plane snapshots live in an **OCI registry**, one image per
+  checkpoint, referenced from Postgres by digest; that digest is the OCI reference the
+  Sandbox backend pins. The implemented XDG per-pipeline JSON snapshots migrate into
+  Postgres rows ([`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md) migration).
 - **Version pinning.** A Run snapshots the Blueprint **Version** it launched from and
   resumes against that pinned Version, so editing a Blueprint never mutates an in-flight
   Run and concurrent Runs may span Versions ([`blueprint.md`](blueprint.md)). An in-run
   local patch is a Run-local divergence from the pinned Version.
 - **Gate as a decision record.** A Gate pause is a durable, per-Run record of a pending
-  human decision, queryable across all Runs — the substrate for the cross-Run attention
-  view in [`interface.md`](interface.md). Resuming a Gate over the control API records
-  approval of that exact record, as the implemented `continue` does today.
+  human decision. Resuming a Gate over the control API records approval of that exact record,
+  as the implemented `continue` does today.
 - **Every tool call is checkpointed.** The checkpoint discipline above extends from model
   calls to each mediated work-tool and control-flow-tool call, giving every work-plane
   effect a logged, resumable provenance.
+- **The checkpoint log is the live event source.** Each checkpointed boundary — status
+  change, accepted transition, gate decision, tool call — is surfaced live as one event on
+  the Run's stream ([`control-api.md`](control-api.md)). The live and replayed views of a Run
+  are one durable log, tailed or replayed; there is no separate event path.

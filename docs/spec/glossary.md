@@ -18,7 +18,10 @@ code-vs-UI split. A rename anywhere is a rename everywhere.
 | **Order**     | the immutable input a Run fulfills (formerly "Request").                  |
 | **Knowledge** | one Worker's contribution to the Corpus.                                  |
 | **Corpus**    | the shared, accumulated Knowledge within one Run.                         |
+| **Sandbox**   | the isolated execution environment realizing a Run's work plane — one per Run, copy-on-write forkable, backed by Dagger. |
 | **Driver**    | the deterministic sequencer that moves a Run Station-to-Station.          |
+| **Provider**  | the model-facing adapter that drives one model over a standardized wire protocol (OpenAI-compatible). Distinct from the Driver. |
+| **Registry**  | the refreshable capability map of available models, projected from an external catalog. |
 | **Gate**      | a Station where a Run halts for a human decision.                        |
 | **Fork**      | an isolated branch within a Run, with its own temporary Corpus.          |
 | **Supervisor**| the interactive control seat over a Run — a human and a model together. See [`supervisor.md`](supervisor.md). |
