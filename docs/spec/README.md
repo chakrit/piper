@@ -26,13 +26,18 @@ One row per file in this folder. **Keep it current** — adding, renaming, or re
 spec file updates its row in the same change. Read this table before you add a file: if a
 doc on the subject already exists, amend that doc instead of writing a second one.
 
-| File                | Covers                                                                   | Status   |
-|---------------------|--------------------------------------------------------------------------|----------|
-| `anti-harness.md`   | Design rationale: why Piper moves orchestration into code, not the model | accepted |
-| `dogfooding.md`     | Self-dogfooding goal, Claude Worker engine, and the phased dev path       | accepted |
-| `aop-engine.md`     | Driver, pipeline config, prompt templates, Worker DSL, corpus/fork rules | accepted |
-| `pipeline-design.md`| Designing Aspect sequences: ordering, principles, and design workflow     | accepted |
-| `run-lifecycle.md`  | Durable run identity, storage, checkpointing, and CLI lifecycle          | accepted |
+| File                 | Covers                                                                   | Status   |
+|----------------------|--------------------------------------------------------------------------|----------|
+| `glossary.md`        | The one vocabulary — every term for code, UI, and docs                   | draft    |
+| `anti-harness.md`    | Design rationale: why Piper moves orchestration into code, not the model | accepted |
+| `dogfooding.md`      | Self-dogfooding goal, Claude Worker engine, and the phased dev path       | accepted |
+| `blueprint.md`       | Blueprint template, Versions, Stations, and the Run instance data model  | draft    |
+| `blueprint-design.md`| Authoring Station sequences: ordering, principles, entrypoints, workflow  | draft    |
+| `engine.md`          | Driver, the Station tool-call loop, Worker toolset, Corpus, and Forks     | draft    |
+| `supervisor.md`      | The interactive control seat and the Blueprint-vs-work-plane boundary     | draft    |
+| `interface.md`       | The world model, floating chrome, and the design/run mode separation     | draft    |
+| `run-lifecycle.md`   | Durable run identity, storage, checkpointing, CLI lifecycle, sandbox      | accepted |
+| `OPEN-QUESTIONS.md`  | The decision queue that gates development — emptied before building       | queue    |
 
 ## Format
 

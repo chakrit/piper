@@ -3,6 +3,11 @@
 - **Status:** accepted
 - **Scope:** Piper's design rationale and the boundary between model work and mechanical orchestration.
 
+> Terminology follows [`glossary.md`](glossary.md): **Station** (was Aspect), **Order**
+> (was Request), and **control-flow tools** (was the single-line DSL). The rationale below
+> is unchanged by those renames. A Worker now also does general work (code, git, commands)
+> through **work tools**, not only text — see [`engine.md`](engine.md).
+
 ## The idea
 
 Piper is an anti-harness: it deliberately gives the model less responsibility.
@@ -48,9 +53,17 @@ limited attention on orchestration.
 ## Alignment by construction
 
 A Worker cannot drift from the workflow because it is never given the room to. It sees one
-Aspect, the immutable Request, the Corpus, and a one-line DSL; it does not hold the
+Station, the immutable Order, the Corpus, and its toolset; it does not hold the
 procedure, choose the next step, or coordinate branches. Every decision the model could
 get wrong about orchestration has already been made in code before the Worker runs.
+
+The deeper reason this matters: **no model reliably notices** — that it is finished, that
+it has drifted, that it has misaligned with what the user wanted. A general harness leans
+on the model to notice those and act on them, and it cannot, so it runs on. Piper takes
+noticing out of the model entirely and puts it where it can live: in **structure** (a Gate
+is a notice-point, `done` is explicit not model-judged, bounds are mechanical) and in the
+**human** (who alone holds the intent to measure drift against). That division is the seat
+the [`supervisor.md`](supervisor.md) formalizes.
 
 This reduces the misalignment problem to a single step. A general harness asks the model
 to stay aligned across an entire multi-step procedure it must remember and re-enact, so
@@ -91,9 +104,11 @@ The DSL is closer to a set of control signals than a programming language:
 - `STOP` ends the run without a Result; and
 - `DONE` returns the Result.
 
-Every response is one command on one non-empty line. Piper rejects extra prose, malformed
-arguments, and invalid state transitions. If formatting fails, it permits one focused
-recovery call rather than letting an ambiguous response leak into the control plane.
+These are control-flow tools the Worker calls; the Driver validates each and applies one
+defined state transition, rejecting invalid targets and transitions. A Worker interleaves
+them with work tools during its Station loop ([`engine.md`](engine.md)); the control plane
+is what the model *signals* through a fixed, mediated tool surface, never free prose it
+must be trusted to format.
 
 `CONTINUE` and `JOIN` do not ask the Worker to choose between two execution policies. They
 are names for the same context-sensitive transition. At the root, the transition joins

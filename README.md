@@ -61,8 +61,8 @@ DONE The request is ready to implement.
 
 Every response must be exactly one non-empty command line. Piper parses and applies it;
 the Worker never edits pipeline state directly. See
-[`docs/spec/aop-engine.md`](docs/spec/aop-engine.md) for the exact grammar and execution
-semantics.
+[`docs/spec/engine.md`](docs/spec/engine.md) for the execution semantics (the target
+design reframes this single-line grammar as control-flow tool calls).
 
 ## Quick start
 
@@ -156,7 +156,7 @@ Continue with the human documentation that matches what you are trying to do:
 - [Build a software-engineering readiness review](docs/guides/engineering-review.md).
 
 For concise design rules, see
-[`docs/spec/pipeline-design.md`](docs/spec/pipeline-design.md).
+[`docs/spec/blueprint-design.md`](docs/spec/blueprint-design.md).
 
 ## Repository map
 

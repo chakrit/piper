@@ -5,8 +5,8 @@ the next Aspect. The Rust driver owns sequencing, branching, joining, routing, a
 limits; the model only applies the current lens and returns one DSL command.
 
 This guide shows the common composition patterns. The
-[AOP engine specification](../spec/aop-engine.md) remains the authority for exact parsing
-and state transitions.
+[engine specification](../spec/engine.md) remains the authority for execution and state
+transitions.
 
 ## Configure the model and pipeline separately
 

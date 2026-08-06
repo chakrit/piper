@@ -1,7 +1,13 @@
 # Durable Run Lifecycle Specification
 
-- **Status:** accepted
+- **Status:** accepted (implemented); target additions below are draft
 - **Scope:** Persistent run identity, storage, selection, checkpointing, and CLI lifecycle.
+
+> Terminology follows [`glossary.md`](glossary.md). The implemented sections below predate
+> the Blueprint/Version model and use "pipeline" for what is now a **Blueprint** and
+> "Aspect" for a **Station**; the durable mechanics they describe are unchanged. How the
+> storage layout evolves for multiple Blueprints, Versions, and a web store is an open
+> decision — see [`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md).
 
 ## Identity and storage
 
@@ -122,3 +128,24 @@ Continuation reloads runtime secrets and the LLM invocation from the stored cano
 configuration path. An explicitly supplied configuration, pipeline, or prompt path must
 canonicalize to the path stored in the snapshot; a mismatch fails closed. Secrets are not
 copied into run snapshots.
+
+## Target additions (draft)
+
+These extend the durable model for the Blueprint/Version and factory-harness design; the
+mechanism choices are open ([`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md)).
+
+- **Work plane per Run.** Each Run owns an isolated sandbox — its checkout, filesystem, and
+  git — so Runs of one Blueprint execute in parallel without collision. Work tools
+  ([`engine.md`](engine.md)) act only inside it. The sandbox mechanism (container, git
+  worktree, or other) is undecided.
+- **Version pinning.** A Run snapshots the Blueprint **Version** it launched from and
+  resumes against that pinned Version, so editing a Blueprint never mutates an in-flight
+  Run and concurrent Runs may span Versions ([`blueprint.md`](blueprint.md)). An in-run
+  local patch is a Run-local divergence from the pinned Version.
+- **Gate as a decision record.** A Gate pause is a durable, per-Run record of a pending
+  human decision, queryable across all Runs — the substrate for the cross-Run attention
+  view in [`interface.md`](interface.md). Resuming a Gate over the control API records
+  approval of that exact record, as the implemented `continue` does today.
+- **Every tool call is checkpointed.** The checkpoint discipline above extends from model
+  calls to each mediated work-tool and control-flow-tool call, giving every work-plane
+  effect a logged, resumable provenance.

@@ -256,6 +256,6 @@ be the only evidence that isolation, joining, or routing works.
 - **The turn limit arrives early:** count `SET` reruns, dispatcher reruns, every child pass,
   routes, and the final synthesis against the single shared budget.
 
-For the exact command grammar and state transitions, see
-[`../spec/aop-engine.md`](../spec/aop-engine.md). For general Aspect ordering and design
-principles, see [`../spec/pipeline-design.md`](../spec/pipeline-design.md).
+For the execution model and state transitions, see
+[`../spec/engine.md`](../spec/engine.md). For general Station ordering and design
+principles, see [`../spec/blueprint-design.md`](../spec/blueprint-design.md).

@@ -13,10 +13,11 @@ artifact.
 
 ## The Worker engine is Claude
 
-Workers invoke the `claude` CLI. The committed development default is
-`claude -p --model {{model}} {{prompt}}` with default model `sonnet`, loaded from `.env`
-and interpolated into `piper.toml`'s `[llm]` table. The configured `system_prompt` is
-prepended to each Worker prompt by the driver, not passed as a separate CLI flag.
+Workers drive a Claude model, default `sonnet`, loaded from `.env`. In the target design
+([`engine.md`](engine.md)) a Worker is a **tool-calling loop**, not a one-shot invocation:
+the single-line `claude -p --model {{model}} {{prompt}}` call retires in favor of a
+tool-calling invocation (API or SDK) so Workers can call work tools and control-flow tools.
+The configured system prompt is prepended by the Driver.
 
 ## The development pipeline
 
@@ -37,7 +38,11 @@ before it.
 
 1. **Make the engine work well.** Harden Piper's core functionality — the durable run
    lifecycle, forks, gates, and recovery — until it is reliable enough to trust with real
-   work. This precedes any workflow encoding.
+   work. This precedes any workflow encoding. In the expanded design this phase now spans
+   the tool-calling engine ([`engine.md`](engine.md)), the Blueprint/Run data model
+   ([`blueprint.md`](blueprint.md)), the Supervisor ([`supervisor.md`](supervisor.md)), and
+   the interface ([`interface.md`](interface.md)); the decisions that gate building them are
+   in [`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md).
 2. **Define the pipeline.** Encode the ACE workflow as `ace-piper.toml` once the engine is
    solid.
 3. **Switch the drive.** Move Piper's own development from harness-driven to
