@@ -1,0 +1,67 @@
+# AFK run — engine hardening (step 1 of dogfooding ordering)
+
+Goal: implement the accepted `run-lifecycle.md` durable-run surface and fix the DONE
+contradiction, as green committed slices on `main`. No push, no live-model calls.
+
+Status: COMPLETE. All 9 planned slices + a cross-slice audit landed green on `main`.
+
+## Blockers
+
+(none — the run finished inside the envelope)
+
+## Calls made alone
+
+- Heartbeat via subagent task-notifications, not a scheduled timer — kept one subagent in
+  flight so its completion revived the loop. Basis: user global instructions override the
+  skill's harness-timer default.
+- Storage = XDG state per `run-lifecycle.md`, not the scratch's `.piper/`. Basis: accepted
+  spec wins over scratch.
+- `DONE` terminates the whole run at any fork depth, producing `done` with that Result.
+  Basis: `aop-engine.md` + `run-lifecycle.md`.
+- Added the `ulid` crate (RunId) and `thiserror` (load-error enum). Basis: rust-coding —
+  small, stable, house picks. Locking uses std `File::try_lock` (toolchain is 1.99), no
+  crate added.
+- Tests use deterministic fake Workers; no live `claude` calls this run. Basis: project
+  convention + envelope. Live smoke run recommended as an attended follow-up.
+- Each foundational slice carried a temporary `#[allow(dead_code)]` until its consumer
+  slice; all were removed by slice 9 except `PipelineLock.field`, a justified hold-for-Drop
+  RAII binding.
+
+## Recommended follow-ups (need you)
+
+1. **Resume gap (design decision).** The crash-recovery machinery is built and unit-tested —
+   `recover_pending` applies a stored un-applied response without re-calling the model, and
+   `interrupted_call` is detected and now surfaced by `status`/`continue`. But no CLI verb
+   drives a non-gate mid-flight crash *forward*: `start` mints a fresh run, `continue`
+   requires `waiting_at_gate`, `abort` only aborts. Such a run can currently only be aborted.
+   The spec defines no resume verb, so this is a gap, not a breach — decide whether to add a
+   `resume`/`retry` verb or fold it into `continue`.
+2. **Live Claude smoke run (attended).** Verify `claude -p --model sonnet` actually drives a
+   real pipeline end to end. Held back from AFK (outward token spend + needs eyeballing).
+3. **Step 2 of the ordering.** Step 1 (make the engine work well) is substantially done.
+   Next is encoding the ACE workflow as `ace-piper.toml`. That's a phase transition — yours
+   to start when step 1 is judged good enough.
+4. **Minor (audit borderline, optional):** the interactive run selector silently skips runs
+   that fail to load; `prompt_templates_for` collapses to embedded templates in the unlikely
+   case a `--prompts` dir equals the project root.
+
+## Summary
+
+Landed this run (12 commits on `main`, none pushed):
+
+- `55db2bb` switch LLM engine to Claude · `8c35c82` fmt fix · `db1a5c5` record
+  self-dogfooding goal + alignment-by-construction spec.
+- `9e90b75` DONE terminates at any fork depth.
+- `848f051` RunId (ULID) · `c866c4b` serde frame stack · `d56705a` RunSnapshot + RunStatus.
+- `e17b392` snapshot/pointer storage (atomic replace, fail-closed load) · `8115897`
+  operation.lock · `1f27f90` headless advance/resume · `6f3350c` checkpoint hooks +
+  interrupted_call.
+- `d7a4aed` durable CLI (start/continue/abort/status, --run selection) · `87bbda0` audit fix
+  surfacing interrupted_call through the read-only CLI.
+
+Earlier this session (before AFK): `91b3b69` ACE config reconcile, `b881858` docs migration.
+
+Verification at run end: `cargo fmt --check`, `cargo clippy --all-targets --all-features
+-D warnings`, and `cargo test` (85 unit + 10 CLI + 10 lifecycle) all green.
+
+Queued / not done: the four follow-ups above. Nothing else from the 9-slice plan remains.

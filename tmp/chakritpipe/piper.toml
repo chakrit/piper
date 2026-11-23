@@ -1,0 +1,4 @@
+[llm]
+invocation = "${PIPER_LLM_INVOCATION}"
+system_prompt = "You are a highly capable AI assistant."
+default_model = "${PIPER_DEFAULT_MODEL}"
